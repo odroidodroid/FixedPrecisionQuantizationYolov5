@@ -1,0 +1,20 @@
+import os
+
+val_list = os.listdir("/home/youngjin/datasets/coco/labels/val2017")
+train_list = os.listdir("/home/youngjin/datasets/coco/labels/train2017")
+
+print(len(val_list))
+print(len(train_list))
+
+
+f = open("/home/youngjin/datasets/coco/val2017.txt","a")
+for i in val_list :
+    f.write(i[:-4]) 
+    f.write("\n")
+f.close()
+
+f = open("/home/youngjin/datasets/coco/train2017.txt","a")
+for i in train_list :
+    f.write(i[:-4]) 
+    f.write("\n")
+f.close()
