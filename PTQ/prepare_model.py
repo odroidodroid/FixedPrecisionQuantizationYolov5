@@ -54,10 +54,13 @@ def prepare_model (model=None, bit_width=None, mode=None, save_path=None) :
     
     model_list = []
 
-    for attr in dir(model):
-        mod = getattr(model, attr)
-        if attr == 'model':
-            model_list = prepare_module(mod, attr, bit_width, mode, save_path, model_list)
+    for attr_outer in dir(model):
+        if attr_outer == 'model':
+            mod_outer = getattr(model, attr_outer)
+            for attr in dir(mod_outer) :
+                if attr == 'model' :
+                    mod = getattr(mod_outer, attr)
+                    model_list = prepare_module(mod, attr_outer + '.' + attr, bit_width, mode, save_path, model_list)
     
     setattr(model, 'model', nn.Sequential(*model_list))
     return model
@@ -73,28 +76,28 @@ def prepare_module(mod=None, attr=None, bit_width=None, mode=None, save_path=Non
     elif isinstance(mod, Conv) :
         module_list = []
         for n, m in mod.named_children() :
-            if (n == 'conv') or (n == 'bn') or (n == 'act') :
-                quant_mod = quantize_module(m, attr + '.' + n, bit_width, mode, save_path)
-                module_list.append(quant_mod)
-        model_list.append(nn.ModuleList(module_list))
+            # if (n == 'conv') or (n == 'bn') or (n == 'act') :
+            quant_mod = quantize_module(m, attr + '.' + n, bit_width, mode, save_path)
+            module_list.append(quant_mod)
+        model_list.append(nn.Sequential(*module_list))
 
     elif isinstance(mod, Bottleneck) :
         module_list = []
         for n, m in mod.named_children() :
             prepare_module(m, attr + '.' + n, bit_width, mode, save_path, module_list)
-        model_list.append(nn.ModuleList(module_list))
+        model_list.append(nn.Sequential(*module_list))
 
     elif isinstance(mod, C3) :
         module_list = []
         for n, m in mod.named_children() :
             prepare_module(m, attr + '.' + n, bit_width, mode, save_path, module_list)
-        model_list.append(nn.ModuleList(module_list))
+        model_list.append(nn.Sequential(*module_list))
             
     elif isinstance(mod, SPPF) :
         module_list = []
         for n, m in mod.named_children() :
             prepare_module(m, attr + '.' + n, bit_width, mode, save_path, model_list)
-        model_list.append(nn.ModuleList(module_list))
+        model_list.append(nn.Sequential(*module_list))
 
     else :
         model_list.append(mod)
@@ -116,17 +119,20 @@ def quantize_module(mod=None, attr=None, bit_width=None, mode=None, save_path=No
         return quant_mod
 
     elif isinstance(mod, nn.BatchNorm2d) :
-        quant_mod = QuantBatchNorm2d()
-        quant_mod.set_param(mod)
-        return quant_mod
+        # quant_mod = QuantBatchNorm2d()
+        # quant_mod.set_param(mod)
+        # return quant_mod
+        return mod
 
     elif isinstance(mod, nn.MaxPool2d) :
-        quant_mod = QuantMaxPool2d()
-        return quant_mod
+        # quant_mod = QuantMaxPool2d()
+        # return quant_mod
+        return mod
 
     elif isinstance(mod, nn.Upsample) :
-        quant_mod = QuantUpsample() 
-        return quant_mod
+        # quant_mod = QuantUpsample() 
+        # return quant_mod
+        return mod
 
     else :
         return mod

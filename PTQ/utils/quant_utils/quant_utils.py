@@ -145,7 +145,7 @@ def symmetric_linear_quantization_params(num_bits,
 def asymmetric_linear_quantization_params(num_bits,
                                           saturation_min,
                                           saturation_max,
-                                          integral_zero_point=True, signed=True):
+                                          integral_zero_point=False, signed=True):
     """
     Compute the scaling factor and zeropoint with the given quantization range for asymmetric quantization.
     Parameters:

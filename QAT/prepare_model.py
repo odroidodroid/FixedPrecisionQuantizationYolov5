@@ -86,7 +86,7 @@ def prepare_module(mod=None, attr=None, bit_width=None, mode=None, save_path=Non
         module_list = []
         for n, m in mod.named_children() :
             prepare_module(m, attr + '.' + n, bit_width, mode, save_path, module_list)
-        model_list.append(nn.Sequential(*module_list))
+        model_list.append(nn.Sequantial(*module_list))
 
     elif isinstance(mod, C3) :
         module_list = []

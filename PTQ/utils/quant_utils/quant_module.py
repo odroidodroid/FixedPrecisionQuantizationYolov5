@@ -65,10 +65,9 @@ class QuantLinear(Module):
     def set_param(self, linear):
         self.in_features = linear.in_features
         self.out_features = linear.out_features
-        self.register_buffer('weight_scale', torch.zeros(self.out_features))
-        self.register_buffer('weight_zeropoint', torch.zeros(self.out_features))
+        # self.register_buffer('weight_scale', torch.zeros(self.out_features))
+        # self.register_buffer('weight_zeropoint', torch.zeros(self.out_features))
         self.weight = Parameter(linear.weight.data.clone())
-        self.register_buffer('weight_integer', torch.zeros_like(self.weight))
         try:
             self.bias = Parameter(linear.bias.data.clone())
         except AttributeError:
@@ -77,7 +76,7 @@ class QuantLinear(Module):
     def set_quant_param(self, save_path=None) :
 
         w = self.weight
-        w_transform = w.data.detach()
+        w_transform = w.data.contiguous().view(self.out_channels, -1)
 
         if self.per_channel:
             w_min, _ = torch.min(w_transform, dim=1, out=None)
@@ -115,14 +114,14 @@ class QuantLinear(Module):
         # perform the quantization
         if not self.full_precision_flag:
             if self.quant_mode == 'symmetric':
-                self.weight_integer = self.weight_function(self.weight, self.weight_bit, self.weight_scale)
-                y = ste_round.apply(F.linear(x_int, weight=self.weight_integer))
+                weight_integer = self.weight_function(self.weight, self.weight_bit, self.weight_scale)
+                y = ste_round.apply(F.linear(x_int, self.weight_integer))
                 y_fp = linear_dequantize(y, x_scale, x_zeropoint)
                 return y_fp
 
             elif self.quant_mode == 'asymmetric':
-                self.weight_integer = self.weight_function(self.weight_bit, self.weight_scale, self.weight_zeropoint)
-                y = ste_round.apply(F.linear(x_int, weight=self.weight_integer))
+                weight_integer = self.weight_function(self.weight_bit, self.weight_scale, self.weight_zeropoint)
+                y = ste_round.apply(F.linear(x_int, weight=weight_integer))
                 y_fp = linear_dequantize(y, x_scale, x_zeropoint)
                 return y_fp
 
@@ -355,7 +354,8 @@ class QuantConv2d(Module):
 
     def __repr__(self):
         s = super(QuantConv2d, self).__repr__()
-        s = "(" + s + " )"
+        s =  s + "(" + str(self.in_channels) + ", " + str(self.out_channels) 
+        + ", kernel_size=" + str(self.kernel_size) + ", stride=" + str(self.stride) + ")"
         return s
 
     def set_param(self, conv):
@@ -370,10 +370,9 @@ class QuantConv2d(Module):
         self.padding = conv.padding
         self.dilation = conv.dilation
         self.groups = conv.groups
-        self.register_buffer('weight_scale', torch.zeros(self.out_channels))
-        self.register_buffer('weight_zeropoint', torch.zeros(self.out_channels))
+        # self.register_buffer('weight_scale', torch.zeros(self.out_channels))
+        # self.register_buffer('weight_zeropoint', torch.zeros(self.out_channels))
         self.weight = Parameter(conv.weight.data.clone())
-        self.register_buffer('weight_integer', torch.zeros_like(self.weight, dtype=torch.int8))
         try:
             self.bias = Parameter(conv.bias.data.clone())
         except AttributeError:
@@ -383,7 +382,7 @@ class QuantConv2d(Module):
 
         w = self.weight 
         if self.per_channel :
-            w_transform = w.data.view(self.out_channels, -1)
+            w_transform = w.data.contiguous().view(self.out_channels, -1)
             w_min = w_transform.min(dim=1).values
             w_max = w_transform.max(dim=1).values
 
@@ -408,26 +407,24 @@ class QuantConv2d(Module):
 
         # quantize activation
         x_int = x
-        x_transform = x.data.view(self.in_channels, -1)
-        x_min, x_max = x_transform.min(dim=1).values, x_transform.max(dim=1).values
+        x_min, x_max = x.min(), x.max()
 
         x_scale, x_zeropoint = asymmetric_linear_quantization_params(self.activation_bit, x_min, x_max)
         x_int = linear_quantize(x, x_scale, x_zeropoint)
 
         if self.quant_mode == "symmetric":
             self.weight_function = SymmetricQuantFunction.apply
-            self.weight_integer = self.weight_function(self.weight, self.weight_bit, self.weight_scale)
+            weight_integer = self.weight_function(self.weight, self.weight_bit, self.weight_scale)
 
-            y =  ste_round.apply(F.conv2d(x_int, self.weight_integer, None,
+            y =  ste_round.apply(F.conv2d(x_int, weight_integer, None,
             self.stride, self.padding, self.dilation, self.groups)) ### ste_round ??????
             y_fp = linear_dequantize(y, x_scale, x_zeropoint)
             return y_fp
 
         elif self.quant_mode =='asymmetric':
             self.weight_function = AsymmetricQuantFunction.apply
-            self.weight_integer = self.weight_function(self.weight, self.weight_bit, self.weight_scale, self.weight_zeropoint)
-
-            y =  ste_round.apply(F.conv2d(x_int, self.weight_integer, None, 
+            weight_integer = self.weight_function(self.weight, self.weight_bit, self.weight_scale, self.weight_zeropoint)
+            y =  ste_round.apply(F.conv2d(x_int, weight_integer, None, 
             self.stride, self.padding, self.dilation, self.groups)) ### ste_round ??????
             y_fp = linear_dequantize(y, x_scale, x_zeropoint)
             return y_fp
