@@ -101,8 +101,8 @@ def run(
     imgsz = check_img_size(imgsz, s=stride)  # check image size
 
     # Quantize model
-    model = prepare_model(model, bit_width, mode, quantized_weight_save_path)
-    print(model)
+    #model = prepare_model(model, bit_width, mode, quantized_weight_save_path)
+    #print(model)
     # Dataloader
     dataset = LoadImages(source, img_size=imgsz, stride=stride, auto=pt)
     bs = 1  # batch_size

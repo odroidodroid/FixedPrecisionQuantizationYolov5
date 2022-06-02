@@ -310,6 +310,17 @@ class QuantAveragePool2d(Module):
 
         return (x_int * correct_scaling_factor, correct_scaling_factor)
 
+# class QuantBottleneck(Module) :
+#     def __init__(self, in_channels, out_channels, shortcut=True, groups=1, expansion=0.5) :
+#         super().__init__()
+#         self.c_ = int(out_channels * expansion)
+#         self.cv1 = QuantConv2d(in_channels=in_channels, out_channels=self.c_, kernel=1, stride=1)
+#         self.cv2 = QuantConv2d(in_channels=self.c_, out_channels=out_channels, kernel=3, stride=1, groups=groups)
+#         self.add = shortcut and in_channels == out_channels
+
+#     def forward(self, x) :
+#         return x + self.cv2(self.cv1(x)) if self.add else self.cv2(self.cv1(x))
+
 
 class QuantConv2d(Module):
     """
@@ -332,16 +343,32 @@ class QuantConv2d(Module):
         The percentile to setup quantization range, 0 means no use of percentile, 99.9 means to cut off 0.1%.
     """
 
-    def __init__(self,
-                 weight_bit=8,
-                 activation_bit=8,
-                 bias_bit=None,
-                 full_precision_flag=False,
-                 quant_mode="asymmetric",
-                 per_channel=True,
-                 fix_flag=False):
+    def __init__(self, 
+                in_channels,
+                out_channels,
+                kernel=1,
+                stride=1,
+                padding=None,
+                groups=1,
+                act=True,
+                weight_bit=8,
+                activation_bit=8,
+                bias_bit=None,
+                full_precision_flag=False,
+                quant_mode="asymmetric",
+                per_channel=True,
+                fix_flag=False):
         super().__init__()
 
+
+
+        self.in_channels = in_channels
+        self.out_channels - out_channels
+        self.kernel_size = kernel
+        self.stride = stride
+        self.padding = padding
+        self.groups = groups 
+        self.act = act
         self.full_precision_flag = full_precision_flag
         self.weight_bit = weight_bit
         self.activation_bit = activation_bit
@@ -353,9 +380,8 @@ class QuantConv2d(Module):
 
 
     def __repr__(self):
-        s = super(QuantConv2d, self).__repr__()
-        s =  s + "(" + str(self.in_channels) + ", " + str(self.out_channels) 
-        + ", kernel_size=" + str(self.kernel_size) + ", stride=" + str(self.stride) + ")"
+        s = "QuantConv2d"
+        s =  s + "(" + str(self.in_channels) + ", " + str(self.out_channels) + ", kernel_size=" + str(self.kernel_size) + ", stride=" + str(self.stride) + ")"
         return s
 
     def set_param(self, conv):
@@ -370,8 +396,6 @@ class QuantConv2d(Module):
         self.padding = conv.padding
         self.dilation = conv.dilation
         self.groups = conv.groups
-        # self.register_buffer('weight_scale', torch.zeros(self.out_channels))
-        # self.register_buffer('weight_zeropoint', torch.zeros(self.out_channels))
         self.weight = Parameter(conv.weight.data.clone())
         try:
             self.bias = Parameter(conv.bias.data.clone())
@@ -424,8 +448,7 @@ class QuantConv2d(Module):
         elif self.quant_mode =='asymmetric':
             self.weight_function = AsymmetricQuantFunction.apply
             weight_integer = self.weight_function(self.weight, self.weight_bit, self.weight_scale, self.weight_zeropoint)
-            y =  ste_round.apply(F.conv2d(x_int, weight_integer, None, 
-            self.stride, self.padding, self.dilation, self.groups)) ### ste_round ??????
+            y =  ste_round.apply(F.conv2d(x_int, weight_integer, None, self.stride, self.padding, self.dilation, self.groups)) ### ste_round ??????
             y_fp = linear_dequantize(y, x_scale, x_zeropoint)
             return y_fp
 

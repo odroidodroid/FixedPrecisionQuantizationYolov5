@@ -3,7 +3,7 @@ from torch import max_pool2d
 from utils.quant_utils.quant_module import *
 from utils.quant_utils.quant_utils import *
 from models.common import *
-from models.yolo import Model
+from models.yolo import Model, Detect
 from copy import deepcopy
 ### where to hook
 ### conv, fused_conv, fc
@@ -53,7 +53,7 @@ def prepare_model (model=None, bit_width=None, mode=None, save_path=None) :
     #    -> weight quantization ? 
     
     model_list = []
-
+    detect_module = None
     for attr_outer in dir(model):
         if attr_outer == 'model':
             mod_outer = getattr(model, attr_outer)
@@ -61,7 +61,11 @@ def prepare_model (model=None, bit_width=None, mode=None, save_path=None) :
                 if attr == 'model' :
                     mod = getattr(mod_outer, attr)
                     model_list = prepare_module(mod, attr_outer + '.' + attr, bit_width, mode, save_path, model_list)
-    
+                    for n, m in mod.named_children() :
+                        if isinstance(m, Detect) :
+                            detect_module = m
+
+    model_list.append(detect_module)
     setattr(model, 'model', nn.Sequential(*model_list))
     return model
     
@@ -98,6 +102,9 @@ def prepare_module(mod=None, attr=None, bit_width=None, mode=None, save_path=Non
         for n, m in mod.named_children() :
             prepare_module(m, attr + '.' + n, bit_width, mode, save_path, model_list)
         model_list.append(nn.Sequential(*module_list))
+    
+    elif isinstance(mod,Detect) :
+        pass
 
     else :
         model_list.append(mod)
