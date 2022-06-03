@@ -18,7 +18,7 @@ from pathlib import Path
 from torch.utils.data import DataLoader
 import random
 from functools import partial
-import sampler
+from sampler import *
 from mmcv.parallel import collate
 from mmcv.runner import get_dist_info
 
@@ -188,13 +188,13 @@ def build_dataloader(dataset, imgs_per_gpu=1, workers_per_gpu=8, num_gpus=2, dis
         # DistributedGroupSampler will definitely shuffle the data to satisfy
         # that images on each GPU are in the same group
         if shuffle:
-            sampler = sampler.DistributedGroupSampler(dataset, imgs_per_gpu, world_size, rank)
+            sampler = DistributedGroupSampler(dataset, imgs_per_gpu, world_size, rank)
         else:
-            sampler = sampler.DistributedSampler(dataset, world_size, rank, shuffle=False)
+            sampler = DistributedSampler(dataset, world_size, rank, shuffle=False)
         batch_size = imgs_per_gpu
         num_workers = workers_per_gpu
     else:
-        sampler = sampler.GroupSampler(dataset, imgs_per_gpu) if shuffle else None
+        sampler = GroupSampler(dataset, imgs_per_gpu) if shuffle else None
         batch_size = num_gpus * imgs_per_gpu
         num_workers = num_gpus * workers_per_gpu
 
