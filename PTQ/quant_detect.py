@@ -121,7 +121,7 @@ def run(
         t2 = time_sync()
         dt[0] += t2 - t1
 
-        # Inference
+        ## Inference ##
         visualize = increment_path(save_dir / 'images' / Path(path).stem, mkdir=True) if visualize else False
         pred = model(im, augment=augment, visualize=visualize)
         t3 = time_sync()
