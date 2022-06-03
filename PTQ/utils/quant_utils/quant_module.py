@@ -6,6 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.multiprocessing as mp
 from torch.nn import Module, Parameter
+
 from .quant_utils import *
 
 def gcd(inputA, inputB) :
@@ -40,7 +41,7 @@ class QuantLinear(Module):
                  activation_bit=8,
                  bias_bit=None,
                  full_precision_flag=False,
-                 quant_mode='asymmetric',
+                 quant_mode='symmetric',
                  per_channel=True,
                  fix_flag=False,
                  ):
@@ -86,7 +87,7 @@ class QuantLinear(Module):
             w_max = w_transform.max().expand(1)
 
         if self.quant_mode == 'symmetric' :
-            self.weight_scale = symmetric_linear_quantization_params(self.weight_bit, w_min, w_max, self.per_channel)
+            self.weight_scale = symmetric_linear_quantization_params_weight(self.weight_bit, w_min, w_max, self.per_channel)
 
         
         elif self.quant_mode == 'asymmetric' :
@@ -104,25 +105,31 @@ class QuantLinear(Module):
         using quantized weights to forward activation x
         """
         # quantize activation
-        x_int = x
-        x_transform = x.data.view(self.in_channels, -1)
-        x_min, x_max = x_transform.min(dim=1).values, x_transform.max(dim=1).values
-
-        x_scale, x_zeropoint = asymmetric_linear_quantization_params(self.activation_bit, x_min, x_max)
-        x_int = linear_quantize(x, x_scale, x_zeropoint)
 
         # perform the quantization
         if not self.full_precision_flag:
             if self.quant_mode == 'symmetric':
+                x_transform = x.data.view(self.in_channels, -1)
+                x_min, x_max = x_transform.min(dim=1).values, x_transform.max(dim=1).values
+
+                x_scale = symmetric_linear_quantization_params_act(self.activation_bit, x_min, x_max)
+                x_int = symmetric_linear_quantize(x, x_scale)
+
                 weight_integer = self.weight_function(self.weight, self.weight_bit, self.weight_scale)
                 y = ste_round.apply(F.linear(x_int, self.weight_integer))
-                y_fp = linear_dequantize(y, x_scale, x_zeropoint)
+                y_fp = symmetric_linear_dequantize(y, x_scale, x_zeropoint)
                 return y_fp
 
             elif self.quant_mode == 'asymmetric':
+                x_transform = x.data.view(self.in_channels, -1)
+                x_min, x_max = x_transform.min(dim=1).values, x_transform.max(dim=1).values
+
+                x_scale, x_zeropoint = asymmetric_linear_quantization_params(self.activation_bit, x_min, x_max)
+                x_int = asymmetric_linear_quantize(x, x_scale, x_zeropoint)
+
                 weight_integer = self.weight_function(self.weight_bit, self.weight_scale, self.weight_zeropoint)
                 y = ste_round.apply(F.linear(x_int, weight=weight_integer))
-                y_fp = linear_dequantize(y, x_scale, x_zeropoint)
+                y_fp = asymmetric_linear_dequantize(y, x_scale, x_zeropoint)
                 return y_fp
 
 
@@ -344,31 +351,15 @@ class QuantConv2d(Module):
     """
 
     def __init__(self, 
-                in_channels,
-                out_channels,
-                kernel=1,
-                stride=1,
-                padding=None,
-                groups=1,
-                act=True,
                 weight_bit=8,
                 activation_bit=8,
-                bias_bit=None,
+                bias_bit=8,
                 full_precision_flag=False,
-                quant_mode="asymmetric",
+                quant_mode="symmetric",
                 per_channel=True,
                 fix_flag=False):
         super().__init__()
 
-
-
-        self.in_channels = in_channels
-        self.out_channels - out_channels
-        self.kernel_size = kernel
-        self.stride = stride
-        self.padding = padding
-        self.groups = groups 
-        self.act = act
         self.full_precision_flag = full_precision_flag
         self.weight_bit = weight_bit
         self.activation_bit = activation_bit
@@ -397,29 +388,33 @@ class QuantConv2d(Module):
         self.dilation = conv.dilation
         self.groups = conv.groups
         self.weight = Parameter(conv.weight.data.clone())
-        try:
-            self.bias = Parameter(conv.bias.data.clone())
-        except AttributeError:
-            self.bias = None
+        self.bias = Parameter(conv.bias.data.clone())
 
     def set_quant_param(self, save_path=None) :
 
         w = self.weight 
+        b = self.bias
         if self.per_channel :
             w_transform = w.data.contiguous().view(self.out_channels, -1)
             w_min = w_transform.min(dim=1).values
             w_max = w_transform.max(dim=1).values
+            b_transform = b.data.contiguous().view(self.out_channels, -1)
+            b_min = b_transform.min(dim=1).values
+            b_max = b_transform.max(dim=1).values
 
         else :
             w_min = w.data.min()
             w_max = w.data.max() 
+            b_min = b.data.min()
+            b_max = b.data.max()
 
         if self.quant_mode == 'symmetric' :
-            self.weight_scale = symmetric_linear_quantization_params(self.weight_bit, w_min, w_max, self.per_channel)
-
+            self.weight_scale = symmetric_linear_quantization_params_weight(self.weight_bit, w_min, w_max)
+            self.bias_scale = symmetric_linear_quantization_params_weight(self.weight_bit, b_min, b_max)
 
         elif self.quant_mode == 'asymmetric' :
-            self.weight_scale, self.weight_zeropoint = asymmetric_linear_quantization_params(self.weight_bit, w_min, w_max, self.per_channel)
+            self.weight_scale, self.weight_zeropoint = asymmetric_linear_quantization_params(self.weight_bit, w_min, w_max)
+            self.bias_scale, self.bias_zeropoint = asymmetric_linear_quantization_params(self.bias_bit, b_min, b_max)
 
     def fix(self):
         self.fix_flag = True
@@ -430,26 +425,37 @@ class QuantConv2d(Module):
     def forward(self, x):
 
         # quantize activation
-        x_int = x
-        x_min, x_max = x.min(), x.max()
-
-        x_scale, x_zeropoint = asymmetric_linear_quantization_params(self.activation_bit, x_min, x_max)
-        x_int = linear_quantize(x, x_scale, x_zeropoint)
 
         if self.quant_mode == "symmetric":
+            x_transform = x.data.contiguous().view(self.in_channels, -1)
+            x_min, x_max = x_transform.min(), x_transform.max()
+            
+            x_scale = symmetric_linear_quantization_params_act(self.activation_bit, x_min, x_max)
+            x_int = symmetric_linear_quantize(x, x_scale)
+
             self.weight_function = SymmetricQuantFunction.apply
             weight_integer = self.weight_function(self.weight, self.weight_bit, self.weight_scale)
+            bias_integer = self.weight_function(self.bias, self.weight_bit, self.bias_scale)
 
-            y =  ste_round.apply(F.conv2d(x_int, weight_integer, None,
+            y =  ste_round.apply(F.conv2d(x_int, weight_integer, bias_integer,
             self.stride, self.padding, self.dilation, self.groups)) ### ste_round ??????
-            y_fp = linear_dequantize(y, x_scale, x_zeropoint)
+            y_fp = symmetric_linear_dequantize_with_bias(y, x_scale, self.weight_scale, self.bias_scale, bias_integer)
             return y_fp
 
         elif self.quant_mode =='asymmetric':
+            x_transform = x.data.contiguous().view(self.in_channels, -1)
+            x_min, x_max = x_transform.min(), x_transform.max()
+            
+            x_scale, x_zeropoint = asymmetric_linear_quantization_params(self.activation_bit, x_min, x_max)
+            x_int = asymmetric_linear_quantize(x, x_scale, x_zeropoint)
+
             self.weight_function = AsymmetricQuantFunction.apply
             weight_integer = self.weight_function(self.weight, self.weight_bit, self.weight_scale, self.weight_zeropoint)
-            y =  ste_round.apply(F.conv2d(x_int, weight_integer, None, self.stride, self.padding, self.dilation, self.groups)) ### ste_round ??????
-            y_fp = linear_dequantize(y, x_scale, x_zeropoint)
+            bias_integer = self.weight_function(self.bias, self.bias_bit, self.bias_scale, self.bias_zeropoint)
+            
+            y =  ste_round.apply(F.conv2d(x_int, weight_integer, bias_integer, 
+            self.stride, self.padding, self.dilation, self.groups))
+            y_fp = asymmetric_linear_dequantize_with_bias(y, bias_integer, x_scale, self.weight_scale, self.bias_scale)
             return y_fp
 
         else:
@@ -460,9 +466,7 @@ def freeze_model(model):
     """
     freeze the activation range ### inference ####
     """
-    if type(model) == QuantAct:
-        model.fix()
-    elif type(model) == QuantConv2d:
+    if type(model) == QuantConv2d:
         model.fix()
     elif type(model) == QuantLinear:
         model.fix()
@@ -484,9 +488,7 @@ def unfreeze_model(model):
     """
     unfreeze the activation range ### training ###
     """
-    if type(model) == QuantAct:
-        model.unfix()
-    elif type(model) == QuantConv2d:
+    if type(model) == QuantConv2d:
         model.unfix()
     elif type(model) == QuantBatchNorm2d :
         model.unfix()
@@ -505,121 +507,3 @@ def unfreeze_model(model):
 
 
 
-
-
-
-
-class QuantAct(Module):
-    """
-    Class to quantize given activations
-    Parameters:
-    ----------
-    activation_bit : int, default 4
-        Bitwidth for quantized activations.
-    act_range_momentum : float, default 0.95
-        Momentum for updating the activation quantization range.
-    full_precision_flag : bool, default False
-        If True, use fp32 and skip quantization
-    running_stat : bool, default True
-        Whether to use running statistics for activation quantization range.
-    quant_mode : 'symmetric' or 'asymmetric', default 'symmetric'
-        The mode for quantization.
-    fix_flag : bool, default False
-        Whether the module is in fixed mode or not.
-    act_percentile : float, default 0
-        The percentile to setup quantization range, 0 means no use of percentile, 99.9 means to cut off 0.1%.
-    fixed_point_quantization : bool, default False
-        Whether to skip deployment-oriented operations and use fixed-point rather than integer-only quantization.
-    """
-
-    def __init__(self,
-                 activation_bit=8,
-                 full_precision_flag=False,
-                 running_stat=True,
-                 quant_mode="asymmetric",
-                 fix_flag=False,
-                 fixed_point_quantization=True):
-        super(QuantAct, self).__init__()
-
-        self.activation_bit = activation_bit
-        self.full_precision_flag = full_precision_flag
-        self.running_stat = running_stat
-        self.quant_mode = quant_mode
-        self.fix_flag = fix_flag
-        self.fixed_point_quantization = fixed_point_quantization
-
-        self.register_buffer('x_min', torch.zeros(1))
-        self.register_buffer('x_max', torch.zeros(1))
-        self.register_buffer('act_scaling_factor', torch.zeros(1))
-
-        self.register_buffer('pre_weight_scaling_factor', torch.ones(1))
-        self.register_buffer('identity_weight_scaling_factor', torch.ones(1))
-
-    def fix(self):
-        """
-        fix the activation range by setting running stat to False
-        """
-        self.running_stat = False
-        self.fix_flag = True
-
-    def unfix(self):
-        """
-        unfix the activation range by setting running stat to True
-        """
-        self.running_stat = True
-        self.fix_flag = False
-
-    def forward(self, x):
-        """
-        x: the activation that we need to quantize
-        pre_act_scaling_factor: the scaling factor of the previous activation quantization layer
-        pre_weight_scaling_factor: the scaling factor of the previous weight quantization layer
-        identity: if True, we need to consider the identity branch
-        identity_scaling_factor: the scaling factor of the previous activation quantization of identity
-        identity_weight_scaling_factor: the scaling factor of the weight quantization layer in the identity branch
-        Note that there are two cases for identity branch:
-        (1) identity branch directly connect to the input featuremap
-        (2) identity branch contains convolutional layers that operate on the input featuremap
-        """
-        if type(x) is tuple:
-            if len(x) == 3:
-                channel_num = x[2]
-            #pre_act_scaling_factor = x[1]
-            x = x[0]
-
-        if self.quant_mode == "symmetric":
-            self.act_function = SymmetricQuantFunction.apply
-        elif self.quant_mode == "asymmetric":
-            self.act_function = AsymmetricQuantFunction.apply
-        else:
-            raise ValueError("unknown quant mode: {}".format(self.quant_mode))
-
-        # calculate the quantization range of the activations
-        if self.running_stat:
-
-            x_min = x.data.min()
-            x_max = x.data.max()
-            if self.x_min == self.x_max:
-                self.x_min += x_min
-                self.x_max += x_max
-
-            # use momentum to update the quantization range
-            self.x_min = min(self.x_min, x_min)
-            self.x_max = max(self.x_max, x_max)
-
-        # perform the quantization
-        if not self.full_precision_flag:
-            if self.quant_mode == 'symmetric':
-                self.act_scaling_factor = symmetric_linear_quantization_params(self.activation_bit,
-                                                                               self.x_min, self.x_max, False)
-                quant_act_int = self.act_function(x, self.activation_bit, self.act_scaling_factor)
-
-            elif self.quant_mode == 'asymmetric' :
-                act_scale, act_zero_point = asymmetric_linear_quantization_params(
-                    self.activation_bit, self.x_min, self.x_max)
-                quant_act_int = self.act_function(x, self.activation_bit, act_scale, act_zero_point)
-
-            return quant_act_int
-
-        else:
-            return x

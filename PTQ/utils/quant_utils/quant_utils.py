@@ -68,7 +68,7 @@ def get_percentile_min_max(input, lower_percentile, upper_percentile, output_ten
     return lower_bound, upper_bound
 
 
-def linear_quantize(input, scale, zero_point, inplace=False):
+def asymmetric_linear_quantize(input, scale, zero_point, inplace=False):
     """
     Quantize floating point input tensor to integers with the given scaling factor and zeropoint.
     Parameters:
@@ -92,7 +92,42 @@ def linear_quantize(input, scale, zero_point, inplace=False):
     return torch.round(scale * input - zero_point)
 
 
-def linear_dequantize(input_q, scale, zero_point, inplace=False):
+def symmetric_linear_quantize(input, scale, inplace=False):
+    """
+    Quantize floating point input tensor to integers with the given scaling factor and zeropoint.
+    Parameters:
+    ----------
+    input: floating point input tensor to be quantized
+    scale: scaling factor for quantization
+    zero_pint: shift for quantization
+    """
+    # reshape scale and zeropoint for convolutional weights and activations
+    if len(input.shape) == 4:
+        scale = scale.view(-1, 1, 1, 1)
+    # reshape scale and zeropoint for linear weights
+    elif len(input.shape) == 2:
+        scale = scale.view(-1, 1)
+    # mapping single-precision input to integer values with the given scale and zeropoint
+    if inplace:
+        input.mul_(scale).round_()
+        return input
+    return torch.round(scale * input)
+
+
+
+def asymmetric_linear_dequantize_with_bias(output, bias, xscale, wscale, bscale) :
+    bias = bias.view(1, -1, 1, 1)
+    xscale = xscale.view(1, -1, 1, 1)
+    wscale = wscale.view(1, -1, 1, 1)
+    bscale = bscale.view(1, -1, 1, 1)
+
+    temp = output / wscale
+    temp = temp / xscale
+    bias = bias / bscale
+    temp = temp + bias
+    return temp
+
+def asymmetric_linear_dequantize(input_q, scale, zero_point, inplace=False):
     """
     Map integer input tensor to fixed-point floating point with given scaling factor and zeropoint.
     Parameters:
@@ -116,7 +151,59 @@ def linear_dequantize(input_q, scale, zero_point, inplace=False):
     return (input_q + zero_point) / scale
 
 
-def symmetric_linear_quantization_params(num_bits,
+def symmetric_linear_dequantize(input_q, scale, inplace=False):
+    """
+    Map integer input tensor to fixed-point floating point with given scaling factor and zeropoint.
+    Parameters:
+    ----------
+    input_q: quantized integer tensor to be mapped
+    scale: scaling factor for quantization
+    zero_pint: shift for quantization
+    """
+    # reshape scale and zeropoint for convolutional weights and activations
+    if len(input_q.shape) == 4:
+        scale = scale.view(-1, 1, 1, 1)
+    # reshape scale and zeropoint for linear weights
+    elif len(input_q.shape) == 2:
+        scale = scale.view(-1, 1)
+    # mapping integer input to fixed point float point value with given scaling factor and zeropoint
+    if inplace:
+        input_q.div_(scale)
+        return input_q
+    return input_q / scale
+
+def symmetric_linear_dequantize_with_bias(input_q, xscale, wscale, bscale, bias_q, inplace=False):
+    """
+    Map integer input tensor to fixed-point floating point with given scaling factor and zeropoint.
+    Parameters:
+    ----------
+    input_q: quantized integer tensor to be mapped
+    scale: scaling factor for quantization
+    zero_pint: shift for quantization
+    """
+    # reshape scale and zeropoint for convolutional weights and activations
+    if len(input_q.shape) == 4:
+        xscale = xscale.view(-1, 1, 1, 1)
+        wscale = wscale.view(-1, 1, 1, 1)
+        bscale = bscale.view(-1, 1, 1, 1)
+        bias_q = bias_q.view(-1, 1, 1, 1)
+    # reshape scale and zeropoint for linear weights
+    elif len(input_q.shape) == 2:
+        xscale = xscale.view(-1, 1)
+        wscale = wscale.view(-1, 1)
+        bscale = bscale.view(-1, 1)
+        bias_q = bias_q.view(-1, 1)
+    # mapping integer input to fixed point float point value with given scaling factor and zeropoint
+    # if inplace:
+    #     input_q.sub_(bias_q).div_(xscale.mul_(wscale)).add_(bias_q.div_(bscale))
+    #     return input_q
+    input_fp = (input_q-bias_q.view(1, -1, 1, 1))/(wscale.view(1, -1, 1, 1)*xscale)
+    input_fp = input_fp + (bias_q/bscale).view(1, -1, 1, 1)
+    return input_fp
+
+
+
+def symmetric_linear_quantization_params_act(num_bits,
                                          saturation_min,
                                          saturation_max,
                                          per_channel=False):
@@ -134,10 +221,39 @@ def symmetric_linear_quantization_params(num_bits,
         n = 2 ** (num_bits - 1) - 1
         if per_channel:
             scale, _ = torch.max(torch.stack([saturation_min.abs(), saturation_max.abs()], dim=1), dim=1)
-            scale = torch.clamp(scale, min=1e-8) / n
+            scale = n / torch.clamp(scale, min=1e-8)
         else:
-            scale = max(saturation_min.abs(), saturation_max.abs())
-            scale = torch.clamp(scale, min=1e-8) / n
+            saturation_min, saturation_max = abs(saturation_min), abs(saturation_max)
+            scale = max(saturation_min, saturation_max)
+            scale = n / torch.clamp(scale, min=1e-8)
+
+    return scale
+
+
+
+def symmetric_linear_quantization_params_weight(num_bits,
+                                         saturation_min,
+                                         saturation_max,
+                                         per_channel=False):
+    """
+    Compute the scaling factor and zeropoint with the given quantization range for symmetric quantization.
+    Parameters:
+    ----------
+    saturation_min: lower bound for quantization range
+    saturation_max: upper bound for quantization range
+    per_channel: if True, calculate the scaling factor per channel.
+    """
+
+    # these computation do not require any gradients, to enforce this, we use torch.no_grad()
+    with torch.no_grad():
+        n = 2 ** (num_bits - 1) - 1
+        if per_channel:
+            scale, _ = torch.max(torch.stack([saturation_min.abs(), saturation_max.abs()], dim=1), dim=1)
+            scale = n / torch.clamp(scale, min=1e-8)
+        else:
+            saturation_min, saturation_max = abs(saturation_min), abs(saturation_max)
+            scale = torch.max(saturation_min, saturation_max)
+            scale = n / torch.clamp(scale, min=1e-8)
 
     return scale
 
@@ -234,10 +350,7 @@ class SymmetricQuantFunction(Function):
         else:
             raise ValueError("The SymmetricQuantFunction requires a pre-calculated scaling factor")
 
-        zero_point = torch.tensor(0.).cuda()
-
-        new_quant_x = linear_quantize(x, scale, zero_point, inplace=False)
-
+        new_quant_x = symmetric_linear_quantize(x, scale)
         new_quant_x = torch.clamp(new_quant_x, -n - 1, n)
 
         ctx.scale = scale
@@ -279,7 +392,7 @@ class AsymmetricQuantFunction(Function):
         #scale, zero_point = asymmetric_linear_quantization_params(k,x_min,x_max)
 
 
-        new_quant_x = linear_quantize(x, scale, zero_point, inplace=False)
+        new_quant_x = asymmetric_linear_dequantize_with_bias(x, scale, zero_point, inplace=False)
         n = 2 ** k - 1
 
         new_quant_x = torch.clamp(new_quant_x, 0, n)

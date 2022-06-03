@@ -101,8 +101,8 @@ def run(
     imgsz = check_img_size(imgsz, s=stride)  # check image size
 
     # Quantize model
-    #model = prepare_model(model, bit_width, mode, quantized_weight_save_path)
-    #print(model)
+    model = prepare_model(model, bit_width, mode, quantized_weight_save_path)
+    print(model)
     # Dataloader
     dataset = LoadImages(source, img_size=imgsz, stride=stride, auto=pt)
     bs = 1  # batch_size
@@ -241,7 +241,7 @@ def parse_opt():
     parser.add_argument('--half', action='store_true', help='use FP16 half-precision inference')
     parser.add_argument('--dnn', action='store_true', help='use OpenCV DNN for ONNX inference')
     parser.add_argument('--bit_width', default=8, type=int)
-    parser.add_argument('--mode', default='asymmetric',type=str)
+    parser.add_argument('--mode', default='symmetric',type=str)
     parser.add_argument('--quantized_weight_save_path', default=ROOT/ '../checkpoints', type=str)
 
     opt = parser.parse_args()

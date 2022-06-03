@@ -51,65 +51,48 @@ def prepare_model (model=None, bit_width=None, mode=None, save_path=None) :
     #    -> bit-width selection preparation
     #    -> build quantization model
     #    -> weight quantization ? 
-    
-    model_list = []
-    detect_module = None
+
     for attr_outer in dir(model):
         if attr_outer == 'model':
             mod_outer = getattr(model, attr_outer)
             for attr in dir(mod_outer) :
                 if attr == 'model' :
                     mod = getattr(mod_outer, attr)
-                    model_list = prepare_module(mod, attr_outer + '.' + attr, bit_width, mode, save_path, model_list)
-                    for n, m in mod.named_children() :
-                        if isinstance(m, Detect) :
-                            detect_module = m
+                    prepare_module(mod, attr_outer + '.' + attr, bit_width, mode, save_path)
 
-    model_list.append(detect_module)
-    setattr(model, 'model', nn.Sequential(*model_list))
     return model
     
-def prepare_module(mod=None, attr=None, bit_width=None, mode=None, save_path=None, model_list=None) :
+def prepare_module(mod=None, attr=None, bit_width=None, mode=None, save_path=None) :
 
     if isinstance(mod, nn.Sequential)  :
-        module_list = []
         for n, m in mod.named_children() :
-            prepare_module(m, attr + '.' + n, bit_width, mode, save_path, module_list)
-        model_list.append(nn.Sequential(*module_list))
+            prepare_module(m, attr + '.' + n, bit_width, mode, save_path)
                
     elif isinstance(mod, Conv) :
-        module_list = []
-        for n, m in mod.named_children() :
-            # if (n == 'conv') or (n == 'bn') or (n == 'act') :
+        mod_copy = deepcopy(mod)
+        for n, m in mod_copy.named_children() :
             quant_mod = quantize_module(m, attr + '.' + n, bit_width, mode, save_path)
-            module_list.append(quant_mod)
-        model_list.append(nn.Sequential(*module_list))
+            setattr(mod, n, quant_mod)
 
     elif isinstance(mod, Bottleneck) :
-        module_list = []
         for n, m in mod.named_children() :
-            prepare_module(m, attr + '.' + n, bit_width, mode, save_path, module_list)
-        model_list.append(nn.Sequential(*module_list))
+            prepare_module(m, attr + '.' + n, bit_width, mode, save_path)
 
     elif isinstance(mod, C3) :
-        module_list = []
         for n, m in mod.named_children() :
-            prepare_module(m, attr + '.' + n, bit_width, mode, save_path, module_list)
-        model_list.append(nn.Sequential(*module_list))
+            prepare_module(m, attr + '.' + n, bit_width, mode, save_path)
             
     elif isinstance(mod, SPPF) :
-        module_list = []
         for n, m in mod.named_children() :
-            prepare_module(m, attr + '.' + n, bit_width, mode, save_path, model_list)
-        model_list.append(nn.Sequential(*module_list))
+            prepare_module(m, attr + '.' + n, bit_width, mode, save_path)
     
     elif isinstance(mod,Detect) :
-        pass
-
-    else :
-        model_list.append(mod)
-
-    return model_list
+        for n, m in mod.named_children() :
+            prepare_module(m, attr + '.' + n, bit_width, mode, save_path)
+    
+    elif isinstance(mod, nn.ModuleList) :
+        for n, m in mod.named_children() :
+            prepare_module(m, attr + '.' + n, bit_width, mode, save_path)
 
 def quantize_module(mod=None, attr=None, bit_width=None, mode=None, save_path=None) :
 
@@ -124,22 +107,6 @@ def quantize_module(mod=None, attr=None, bit_width=None, mode=None, save_path=No
         quant_mod.set_param(mod)
         quant_mod.set_quant_param(save_path=save_path)
         return quant_mod
-
-    elif isinstance(mod, nn.BatchNorm2d) :
-        # quant_mod = QuantBatchNorm2d()
-        # quant_mod.set_param(mod)
-        # return quant_mod
-        return mod
-
-    elif isinstance(mod, nn.MaxPool2d) :
-        # quant_mod = QuantMaxPool2d()
-        # return quant_mod
-        return mod
-
-    elif isinstance(mod, nn.Upsample) :
-        # quant_mod = QuantUpsample() 
-        # return quant_mod
-        return mod
 
     else :
         return mod
