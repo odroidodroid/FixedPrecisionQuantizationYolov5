@@ -1,9 +1,9 @@
-from __future__ import division
+#from __future__ import division
 import math
 
 import numpy as np
 import torch
-#from mmcv.runner import get_dist_info
+from mmcv.runner import get_dist_info
 from torch.utils.data import DistributedSampler as _DistributedSampler
 from torch.utils.data import Sampler
 
@@ -95,6 +95,10 @@ class DistributedGroupSampler(Sampler):
                  samples_per_gpu=1,
                  num_replicas=None,
                  rank=None):
+
+        if num_replicas is None :
+            if rank is None :
+                rank, num_replicas = get_dist_info()
         self.dataset = dataset
         self.samples_per_gpu = samples_per_gpu
         self.num_replicas = num_replicas
