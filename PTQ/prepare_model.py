@@ -116,9 +116,7 @@ def freeze_model(model):
     """
     freeze the activation range ### inference ####
     """
-    if type(model) == QuantAct:
-        model.fix()
-    elif type(model) == QuantConv2d:
+    if type(model) == QuantConv2d:
         model.fix()
     elif type(model) == QuantLinear:
         model.fix()
@@ -138,9 +136,7 @@ def unfreeze_model(model):
     """
     unfreeze the activation range ### training ###
     """
-    if type(model) == QuantAct:
-        model.unfix()
-    elif type(model) == QuantConv2d:
+    if type(model) == QuantConv2d:
         model.unfix()
     elif type(model) == QuantLinear:
         model.unfix()

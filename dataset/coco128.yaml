@@ -14,7 +14,7 @@ val: images/val2017  # val images (relative to 'path') 128 images
 test:  images/test2017 # test images (optional)
 
 # Classes
-nc: 80  # number of classes
+nc: 91  # number of classes
 names: ['person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck', 'boat', 'traffic light',
         'fire hydrant', 'stop sign', 'parking meter', 'bench', 'bird', 'cat', 'dog', 'horse', 'sheep', 'cow',
         'elephant', 'bear', 'zebra', 'giraffe', 'backpack', 'umbrella', 'handbag', 'tie', 'suitcase', 'frisbee',

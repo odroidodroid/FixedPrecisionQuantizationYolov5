@@ -162,6 +162,7 @@ def main():
     data_loader = build_dataloader(dataset,
                                    imgs_per_gpu=32,
                                    workers_per_gpu=args.workers,
+                                   num_gpus=2,
                                    dist=args.distributed,
                                    shuffle=False)
 

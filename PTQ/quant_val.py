@@ -43,7 +43,11 @@ from utils.general import (LOGGER, check_dataset, check_img_size, check_requirem
                            scale_coords, xywh2xyxy, xyxy2xywh)
 from utils.metrics import ConfusionMatrix, ap_per_class, box_iou
 from utils.plots import output_to_target, plot_images, plot_val_study
+from utils.plots import *
 from utils.torch_utils import select_device, time_sync
+from utils.quant_utils.quant_module import *
+from utils.quant_utils.quant_utils import *
+from prepare_model import *
 
 
 def save_one_txt(predn, save_conf, shape, file):
@@ -54,6 +58,19 @@ def save_one_txt(predn, save_conf, shape, file):
         line = (cls, *xywh, conf) if save_conf else (cls, *xywh)  # label format
         with open(file, 'a') as f:
             f.write(('%g ' * len(line)).rstrip() % line + '\n')
+
+
+
+def save_one_image(predn, names, save_conf, shape, file, img_id) :
+
+    im0 = cv2.imread('/home/youngjin/datasets/coco/val/images/' + img_id + '.jpg')
+    annotator = Annotator(im0, line_width=3, example=str(names))
+    for *xyxy, conf, cls in predn.tolist() :
+        c = int(cls)
+        label = names[c]
+        annotator.box_label(xyxy, label, color=(c, True))
+    im0 = annotator.result()
+    cv2.imwrite(file, im0)
 
 
 def save_one_json(predn, jdict, path, class_map):
@@ -67,6 +84,7 @@ def save_one_json(predn, jdict, path, class_map):
             'category_id': class_map[int(p[5])],
             'bbox': [round(x, 3) for x in b],
             'score': round(p[4], 5)})
+    
 
 
 def process_batch(detections, labels, iouv):
@@ -96,32 +114,36 @@ def process_batch(detections, labels, iouv):
 @torch.no_grad()
 def run(
         data,
-        weights= ROOT / 'runs/train/exp/weights/last.pt',  # model.pt path(s)
-        batch_size=32,  # batch size
+        weights= ROOT / '../checkpoints/yolov5l.pt',  # model.pt path(s)
+        batch_size=1,  # batch size
         imgsz=640,  # inference size (pixels)
-        conf_thres=0.001,  # confidence threshold
-        iou_thres=0.6,  # NMS IoU threshold
+        conf_thres=0.25,  # confidence threshold
+        iou_thres=0.45,  # NMS IoU threshold
         task='val',  # train, val, test, speed or study
         device='0,1',  # cuda device, i.e. 0 or 0,1,2,3 or cpu
         workers=8,  # max dataloader workers (per RANK in DDP mode)
         single_cls=False,  # treat as single-class dataset
         augment=False,  # augmented inference
         verbose=False,  # verbose output
-        save_txt=False,  # save results to *.txt
+        save_txt=True,  # save results to *.txt
+        save_img=True,
         save_hybrid=False,  # save label+prediction hybrid results to *.txt
         save_conf=False,  # save confidences in --save-txt labels
-        save_json=False,  # save a COCO-JSON results file
-        project=ROOT / 'runs/val',  # save to project/name
+        save_json=True,  # save a COCO-JSON results file
+        project=ROOT / '../../runs/quant_val',  # save to project/name
         name='exp',  # save to project/name
         exist_ok=False,  # existing project/name ok, do not increment
-        half=True,  # use FP16 half-precision inference
+        half=False,  # use FP16 half-precision inference
         dnn=False,  # use OpenCV DNN for ONNX inference
         model=None,
         dataloader=None,
         save_dir=Path(''),
-        plots=True,
+        plots=False,
         callbacks=Callbacks(),
         compute_loss=None,
+        bit_width=8,
+        mode='symmetric',
+        quantized_weight_save_path='',
 ):
     # Initialize/load model and set device
     training = model is not None
@@ -135,17 +157,21 @@ def run(
         # Directories
         save_dir = increment_path(Path(project) / name, exist_ok=exist_ok)  # increment run
         (save_dir / 'labels' if save_txt else save_dir).mkdir(parents=True, exist_ok=True)  # make dir
+        (save_dir / 'images' if save_txt else save_dir).mkdir(parents=True, exist_ok=True)  # make dir
 
         # Load model
         model = DetectMultiBackend(weights, device=device, dnn=dnn, data=data, fp16=half)
-        stride, pt, jit, engine = model.stride, model.pt, model.jit, model.engine
+        model = prepare_model(model, bit_width, mode, quantized_weight_save_path)
+        print(model)
+
+        stride, pt, jit, engine = model.stride, model.pt, False, False
         imgsz = check_img_size(imgsz, s=stride)  # check image size
         half = model.fp16  # FP16 supported on limited backends with CUDA
         if engine:
             batch_size = model.batch_size
         else:
             device = model.device
-            if not (pt or jit):
+            if not pt :
                 batch_size = 1  # export.py models default to batch-size 1
                 LOGGER.info(f'Forcing --batch-size 1 square inference (1,3,{imgsz},{imgsz}) for non-PyTorch models')
 
@@ -162,10 +188,10 @@ def run(
 
     # Dataloader
     if not training:
-        if pt and not single_cls:  # check --weights are trained on --data
-            ncm = model.model.nc
-            assert ncm == nc, f'{weights[0]} ({ncm} classes) trained on different --data than what you passed ({nc} ' \
-                              f'classes). Pass correct combination of --weights and --data that are trained together.'
+    #    if pt and not single_cls:  # check --weights are trained on --data
+    #       ncm = model.model.nc
+    #       assert ncm == nc, f'{weights[0]} ({ncm} classes) trained on different --data than what you passed ({nc} ' \
+    #                         f'classes). Pass correct combination of --weights and --data that are trained together.'
         model.warmup(imgsz=(1 if pt else batch_size, 3, imgsz, imgsz))  # warmup
         pad = 0.0 if task in ('speed', 'benchmark') else 0.5
         rect = False if task == 'benchmark' else pt  # square inference for benchmarks
@@ -214,7 +240,7 @@ def run(
         targets[:, 2:] *= torch.tensor((width, height, width, height), device=device)  # to pixels
         lb = [targets[targets[:, 0] == i, 1:] for i in range(nb)] if save_hybrid else []  # for autolabelling
         t3 = time_sync()
-        out = non_max_suppression(out, conf_thres, iou_thres, labels=lb, multi_label=True, agnostic=single_cls)
+        out = non_max_suppression(out, conf_thres, iou_thres, labels=lb, multi_label=False, agnostic=False,max_det=1000)
         dt[2] += time_sync() - t3
 
         # Metrics
@@ -249,6 +275,8 @@ def run(
             # Save/log
             if save_txt:
                 save_one_txt(predn, save_conf, shape, file=save_dir / 'labels' / (path.stem + '.txt'))
+            if save_img :
+                save_one_image(predn, names, save_conf, shape, file=save_dir / 'images' / (path.stem + '.jpg'), img_id=path.stem)
             if save_json:
                 save_one_json(predn, jdict, path, class_map)  # append to COCO-JSON dictionary
             callbacks.run('on_val_image_end', pred, predn, path, names, im[si])
@@ -343,15 +371,19 @@ def parse_opt():
     parser.add_argument('--single-cls', action='store_true', help='treat as single-class dataset')
     parser.add_argument('--augment', action='store_true', help='augmented inference')
     parser.add_argument('--verbose', action='store_true', help='report mAP by class')
-    parser.add_argument('--save-txt', action='store_true', help='save results to *.txt')
+    parser.add_argument('--save-txt', default=True, help='save results to *.txt')
+    parser.add_argument('--save-img', default=True)
     parser.add_argument('--save-hybrid', action='store_true', help='save label+prediction hybrid results to *.txt')
     parser.add_argument('--save-conf', action='store_true', help='save confidences in --save-txt labels')
-    parser.add_argument('--save-json', action='store_true', help='save a COCO-JSON results file')
-    parser.add_argument('--project', default=ROOT / 'runs/val', help='save to project/name')
+    parser.add_argument('--save-json', default=True, help='save a COCO-JSON results file')
+    parser.add_argument('--project', default=ROOT / '../../runs/quant_val', help='save to project/name')
     parser.add_argument('--name', default='exp', help='save to project/name')
     parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
     parser.add_argument('--half', action='store_true', help='use FP16 half-precision inference')
     parser.add_argument('--dnn', action='store_true', help='use OpenCV DNN for ONNX inference')
+    parser.add_argument('--bit_width',default=8)
+    parser.add_argument('--mode',default='symmetric')
+    parser.add_argument('--quantized_weight_save_path', default='')
     opt = parser.parse_args()
     opt.data = check_yaml(opt.data)  # check YAML
     opt.save_json |= opt.data.endswith('coco.yaml')

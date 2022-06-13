@@ -279,7 +279,7 @@ def quant_train(hyp, opt, device, callbacks):  # hyp is path/to/hyp.yaml or hyp 
     # Model attributes
     nl = de_parallel(qmodel).qmodel[-1].nl  # number of detection layers (to scale hyps)
     hyp['box'] *= 3 / nl  # scale to layers
-    hyp['cls'] *= nc / 80 * 3 / nl  # scale to classes and layers
+    hyp['cls'] *= nc / 91 * 3 / nl  # scale to classes and layers ###############
     hyp['obj'] *= (imgsz / 640) ** 2 * 3 / nl  # scale to image size and layers
     hyp['label_smoothing'] = opt.label_smoothing
     qmodel.nc = nc  # attach number of classes to model

@@ -3,10 +3,18 @@ import os
 
 
 if __name__ =='__main__' :
+
+    # gt_dir = '/home/youngjin/datasets/coco/annotations/instances_val2017.json'
+    # with open(gt_dir) as fgt :
+    #     gt_json_dict = json.load(fgt)
+    #     print(len(gt_json_dict))
+    #     print(gt_json_dict.keys())
+    #     print(gt_json_dict['annotations'])
+    
     result_json_dict = []
-    result_dir = './PTQ/runs/detect/exp/labels'
+    result_dir = '/home/youngjin/projects/runs/detect/exp4/labels'
     result_list = os.listdir(result_dir)
-    result_json = str(f'./PTQ/runs/detect/exp/result.json')
+    result_json = str(f'/home/youngjin/projects/runs/detect/exp4/result.json')
 
     for res in result_list :
         image_id = int(res.split('.')[0])
@@ -16,10 +24,10 @@ if __name__ =='__main__' :
             value = line.split(' ')
             bbox_value = []
             for v in range(1,4) :
-                bbox_value.append(value[v])
+                bbox_value.append(float(value[v]))
             result_json_dict.append({
                 'image_id' : image_id,
-                'category_id' : value[0],
+                'category_id' : int(value[0]),
                 'bbox' : bbox_value,
                 'score' : 1.0
             })
