@@ -208,7 +208,7 @@ def run(
     #                                    prefix=colorstr(f'{task}: '))[0]
 
     # dataloader
-    dataset = LoadImagesAndLabels_custom(source, imgsz, batch_size, augment=False, stride=stride)
+    dataset = LoadImagesAndLabels_custom(image_path=source + '/images', label_path=source + '/labels', img_size=imgsz, stride=stride, auto=True)
 
     seen = 0
     confusion_matrix = ConfusionMatrix(nc=nc)
@@ -222,11 +222,11 @@ def run(
     #pbar = tqdm(dataloader, desc=s, bar_format='{l_bar}{bar:10}{r_bar}{bar:-10b}')  # progress bar
     #for batch_i, (im, targets, paths, shapes) in enumerate(pbar):
     batch_i = 0
-    for im, targets, path, shapes in dataset :
+    for im, targets, paths, shapes in dataset :
         callbacks.run('on_val_batch_start')
         t1 = time_sync()
         if cuda:
-            im = im.to(device, non_blocking=True)
+            im = torch.from_numpy(im).to(device, non_blocking=True)
             targets = targets.to(device)
         im = im.half() if half else im.float()  # uint8 to fp16/32
         im /= 255  # 0 - 255 to 0.0 - 1.0
