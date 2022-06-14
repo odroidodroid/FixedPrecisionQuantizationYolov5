@@ -39,7 +39,7 @@ class Detect(nn.Module):
     onnx_dynamic = False  # ONNX export parameter
     export = False  # export mode
 
-    def __init__(self, nc=91, anchors=(), ch=(), inplace=True):  # detection layer
+    def __init__(self, nc=80, anchors=(), ch=(), inplace=True):  # detection layer
         super().__init__()
         self.nc = nc  # number of classes
         self.no = nc + 5  # number of outputs per anchor

@@ -640,7 +640,7 @@ def colorstr(*input):
     return ''.join(colors[x] for x in args) + f'{string}' + colors['end']
 
 
-def labels_to_class_weights(labels, nc=91):
+def labels_to_class_weights(labels, nc=80):
     # Get class weights (inverse frequency) from training labels
     if labels[0] is None:  # no labels loaded
         return torch.Tensor()
@@ -659,7 +659,7 @@ def labels_to_class_weights(labels, nc=91):
     return torch.from_numpy(weights)
 
 
-def labels_to_image_weights(labels, nc=91, class_weights=np.ones(91)):
+def labels_to_image_weights(labels, nc=80, class_weights=np.ones(80)):
     # Produces image weights based on class_weights and image contents
     class_counts = np.array([np.bincount(x[:, 0].astype(np.int), minlength=nc) for x in labels])
     image_weights = (class_weights.reshape(1, nc) * class_counts).sum(1)
@@ -698,6 +698,16 @@ def xywh2xyxy(x):
     y[:, 2] = x[:, 0] + x[:, 2] / 2  # bottom right x
     y[:, 3] = x[:, 1] + x[:, 3] / 2  # bottom right y
     return y
+
+def xywh2xyxy_custom(x):
+    # Convert nx4 boxes from [x, y, w, h] to [x1, y1, x2, y2] where xy1=top-left, xy2=bottom-right
+    y = x.clone() if isinstance(x, torch.Tensor) else np.copy(x)
+    y[0] = x[0] - x[2] / 2  # top left x
+    y[1] = x[1] - x[3] / 2  # top left y
+    y[2] = x[0] + x[2] / 2  # bottom right x
+    y[3] = x[1] + x[3] / 2  # bottom right y
+    return y
+
 
 
 def xywhn2xyxy(x, w=640, h=640, padw=0, padh=0):

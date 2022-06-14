@@ -347,15 +347,15 @@ class LoadImagesAndLabels_custom:
                 with open(label_path,'r') as fp :
                     lines = fp.readlines()
                     for line in lines :
+                        target = []
                         values = line.split(' ')
                         category_id = int(values[0])
-                        category_id = np.array(category_id, dtype=np.int64)
-                        bbox = []
+                        target.append(category_id)
                         for i in range(1,5) :
-                            bbox.append(float(values[i]))
-                        bbox = np.array(bbox, dtype=np.float32)
-                        target = category, bbox
-
+                            target.append(float(values[i]))
+                        target = np.array(target, dtype=np.float32)
+                        targets.append(target)
+                targets = np.array(targets)
             else :
                 targets = None                    
         # Padded resize
@@ -365,9 +365,8 @@ class LoadImagesAndLabels_custom:
         img = img.transpose((2, 0, 1))[::-1]  # HWC to CHW, BGR to RGB
         img = np.ascontiguousarray(img)
 
-
         #return image_path, img, img0, self.cap, s
-        return img, targets, image_path, self.img_size
+        return img, img0, targets, image_path, img.shape
 
     def new_video(self, path):
         self.frame = 0

@@ -208,7 +208,7 @@ class TFSPPF(keras.layers.Layer):
 
 class TFDetect(keras.layers.Layer):
     # TF YOLOv5 Detect layer
-    def __init__(self, nc=91, anchors=(), ch=(), imgsz=(640, 640), w=None):  # detection layer
+    def __init__(self, nc=80, anchors=(), ch=(), imgsz=(640, 640), w=None):  # detection layer
         super().__init__()
         self.stride = tf.convert_to_tensor(w.stride.numpy(), dtype=tf.float32)
         self.nc = nc  # number of classes
