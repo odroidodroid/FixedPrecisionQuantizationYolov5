@@ -75,7 +75,7 @@ def getDistillData(teacher_model, dataloader, work_dir, num_batch, iteration_cnt
             (torch.randint(high=255, size=size) - 128).float().cuda() / 5418.75
         ]
 
-        im = torch.tensor(gaussian_data['img'][0], requires_grad=True)
+        im = torch.tensor(gaussian_data['img'][0].clone().detach().requires_grad_(True))
         optimizer = optim.Adam([gaussian_data['img'][0]], lr=0.1)
         # scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, min_lr=1e-4, verbose=False, patience=100)
         input_mean = torch.zeros(1, 3).cuda()

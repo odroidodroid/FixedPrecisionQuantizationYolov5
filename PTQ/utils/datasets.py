@@ -258,9 +258,7 @@ class LoadImages:
         return self.nf  # number of files
 
 
-
-
-class LoadImagesAndLabels_custom:
+class LoadImagesAndLabels_custom() :
     # YOLOv5 image/video dataloader, i.e. `python detect.py --source image.jpg/vid.mp4`
     def __init__(self, image_path, label_path, img_size=640, stride=32, auto=True):
         p = str(Path(image_path).resolve())  # os-agnostic absolute path

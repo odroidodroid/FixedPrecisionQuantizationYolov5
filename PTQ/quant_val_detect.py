@@ -86,6 +86,16 @@ def save_one_json(predn, jdict, path, class_map):
             'score': round(p[4], 5)})
     
 
+def update(model, data_loader, show=False):
+    data = next(iter(data_loader))
+    img = torch.load('retinanet_distill.pth')[0]['img']
+    data['img'][0] = img[0].cpu()
+    # size = (1, 3, 800, 1216)
+    # data['img'] = [(torch.randint(high=255, size=size)-128).float()/5418.75]
+
+    _ = model(return_loss=False, rescale=not show, **data)
+
+
 
 def process_batch(detections, labels, iouv):
     """
@@ -167,6 +177,11 @@ def run(
         model = DetectMultiBackend(weights, device=device, dnn=dnn, data=data, fp16=half)
         model = prepare_model(model, bit_width, mode, quantized_weight_save_path)
         print(model)
+
+        # Distill data
+        #update(model, data_loader)
+        #freeze_model(model)
+        #print('model updated and froze')
 
         stride, pt, jit, engine = model.stride, model.pt, False, False
         imgsz = check_img_size(imgsz, s=stride)  # check image size
