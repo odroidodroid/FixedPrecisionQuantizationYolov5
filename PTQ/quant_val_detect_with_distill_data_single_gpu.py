@@ -130,6 +130,7 @@ def run(
         weights= ROOT / '../checkpoints/yolov5l.pt',  # model.pt path(s)
         source='/home/youngjin/datasets/coco/val',
         data_config=ROOT / '../config/distill_data_config.py',
+        evaluate=True,
         batch_size=1,  # batch size
         imgsz=640,  # inference size (pixels)
         classes=None,  # filter by class: --class 0, or --class 0 2 3
@@ -258,7 +259,14 @@ def run(
     #for batch_i, (im, targets, paths, shapes) in enumerate(pbar):
     #batch_i = 0
     #for im, im0, targets, paths, shapes in dataset :
-    results = []
+
+    targets = LoadAnnotations(with_bbox=True,with_label=True,
+                                with_mask=False,
+                                with_seg=False,
+                                poly2mask=False,
+                                denorm_bbox=False,
+                                file_client_args=dict(backend='disk'))
+
     for batch_i, data in enumerate(data_loader) :
         callbacks.run('on_val_batch_start')
         im = data['img'][0].to(device)
@@ -298,61 +306,33 @@ def run(
         out = non_max_suppression(out, conf_thres, iou_thres, classes, agnostic_nms, max_det)
         dt[2] += time_sync() - t3
 
-        # Save results
-        results.append({'out' : out, 
-                        'im' : im, 
-                        'im0' : im0, 
-                        'img_id' : img_id})
-        
-        callbacks.run('on_val_batch_end')
+        if evaluate : 
+            for si, pred in enumerate(out):
+                bboxes = targets[si]
+                cat_ids = targets[si].view(1,1)
+                nl, npr = cat_ids.shape[0], pred.shape[0]  # number of labels, predictions
+                correct = torch.zeros(npr, niou, dtype=torch.bool, device=device)  # init
+                seen += 1
 
+                if npr == 0:
+                    if nl:
+                        stats.append((correct, *torch.zeros((3, 0), device=device)))
+                    continue
 
-    targets = LoadAnnotations(with_bbox=True,with_label=True,
-                                with_mask=False,
-                                with_seg=False,
-                                poly2mask=False,
-                                denorm_bbox=False,
-                                file_client_args=dict(backend='disk'))
+                # Predictions
+                predn = pred.clone()
+                predn[:, :4] = scale_coords(im.shape[2:], predn[:, :4], im0.shape).round()  # native-space pred
 
-    target_bboxes =[]
-    target_labels = []
-    targets._load_bboxes(target_bboxes)
-    targets._load_labels(target_labels)
-
-    # Metrics
-    for _, result in enumerate(results):
-        out = result['out']
-        im = result['im']
-        im0 = result['im0']
-        img_id = result['img_id']
-        paths = source + '/images/' + img_id + '.jpg'
-
-        for si, pred in enumerate(out):
-            bboxes = target_bboxes[si]
-            cat_ids = target_labels[si].view(1,1)
-            nl, npr = cat_ids.shape[0], pred.shape[0]  # number of labels, predictions
-            correct = torch.zeros(npr, niou, dtype=torch.bool, device=device)  # init
-            seen += 1
-
-            if npr == 0:
+                # Evaluate
                 if nl:
-                    stats.append((correct, *torch.zeros((3, 0), device=device)))
-                continue
-
-            # Predictions
-            predn = pred.clone()
-            predn[:, :4] = scale_coords(im.shape[2:], predn[:, :4], im0.shape).round()  # native-space pred
-
-            # Evaluate
-            if nl:
-                tbox = xywh2xyxy(bboxes[:,0:4])  # target boxes
-                tbox = scale_coords(im.shape[2:], tbox, im0.shape)  # native-space labels
-                category_id = cat_ids[:,0].view(1, 1)
-                labelsn = torch.cat((category_id, tbox), 1)  # native-space labels
-                correct = process_batch(predn, labelsn, iouv)
-                if plots:
-                    confusion_matrix.process_batch(predn, labelsn)
-            stats.append((correct, pred[:, 4], pred[:, 5], cat_ids[:, 0]))  # (correct, conf, pcls, tcls)
+                    tbox = xywh2xyxy(bboxes[:,0:4])  # target boxes
+                    tbox = scale_coords(im.shape[2:], tbox, im0.shape)  # native-space labels
+                    category_id = cat_ids[:,0].view(1, 1)
+                    labelsn = torch.cat((category_id, tbox), 1)  # native-space labels
+                    correct = process_batch(predn, labelsn, iouv)
+                    if plots:
+                        confusion_matrix.process_batch(predn, labelsn)
+                stats.append((correct, pred[:, 4], pred[:, 5], cat_ids[:, 0]))  # (correct, conf, pcls, tcls)
 
             # Save/log
             if save_txt:
@@ -374,7 +354,8 @@ def run(
             Thread(target=plot_images, args=(im, output_to_target(out), paths, f, names), daemon=True).start()
 
 
-
+        
+        callbacks.run('on_val_batch_end')
 
 
 
@@ -450,6 +431,7 @@ def parse_opt():
     parser.add_argument('--data', type=str, default=ROOT / '../dataset/coco.yaml', help='dataset.yaml path')
     parser.add_argument('--weights', nargs='+', type=str, default=ROOT / 'yolov5l.pt', help='model.pt path(s)')
     parser.add_argument('--source', default='/home/youngjin/datasets/coco/val')
+    parser.add_argument('--evaluate', default=True)
     parser.add_argument('--data_config', default=ROOT / '../config/distill_data_config.py')
     parser.add_argument('--batch-size', type=int, default=2, help='batch size')
     parser.add_argument('--imgsz', '--img', '--img-size', nargs='+',type=int, default=[640], help='inference size (pixels)')
