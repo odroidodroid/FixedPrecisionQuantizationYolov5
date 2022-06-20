@@ -142,6 +142,47 @@ def create_dataloader(path,
                   collate_fn=LoadImagesAndLabels.collate_fn4 if quad else LoadImagesAndLabels.collate_fn), dataset
 
 
+
+
+def create_dataloader_custom(image_path,
+                      label_path,
+                      imgsz,
+                      batch_size,
+                      stride,
+                      rank=-1,
+                      workers=8,
+                      image_weights=False,
+                      quad=False,
+                      shuffle=False):
+    # image_path, label_path, imgsz=640, stride=32, auto=True
+    with torch_distributed_zero_first(rank):  # init dataset *.cache only once if DDP
+        dataset = LoadImagesAndLabels_custom(
+            image_path,
+            label_path,
+            imgsz,
+            stride)
+
+    batch_size = min(batch_size, len(dataset))
+    nd = torch.cuda.device_count()  # number of CUDA devices
+    nw = min([os.cpu_count() // max(nd, 1), batch_size if batch_size > 1 else 0, workers])  # number of workers
+    sampler = None if rank == -1 else distributed.DistributedSampler(dataset, shuffle=shuffle)
+    loader = DataLoader if image_weights else InfiniteDataLoader  # only DataLoader allows for attribute updates
+    return loader(dataset,
+                  batch_size=batch_size,
+                  shuffle=shuffle and sampler is None,
+                  num_workers=nw,
+                  sampler=sampler,
+                  pin_memory=True,
+                  collate_fn=LoadImagesAndLabels_custom.collate_fn4 if quad else LoadImagesAndLabels_custom.collate_fn), dataset
+
+
+
+
+
+
+
+
+
 class InfiniteDataLoader(dataloader.DataLoader):
     """ Dataloader that reuses workers
 
@@ -260,7 +301,7 @@ class LoadImages:
 
 class LoadImagesAndLabels_custom() :
     # YOLOv5 image/video dataloader, i.e. `python detect.py --source image.jpg/vid.mp4`
-    def __init__(self, image_path, label_path, img_size=640, stride=32, auto=True):
+    def __init__(self, image_path, label_path, imgsz=640, stride=32, auto=True):
         p = str(Path(image_path).resolve())  # os-agnostic absolute path
         q = str(Path(label_path).resolve())
         if '*' in p:
@@ -289,13 +330,13 @@ class LoadImagesAndLabels_custom() :
 
         labels = [x for x in qfiles if x.split('.')[-1].lower() in LABEL_FORMATS]
 
-        self.img_size = img_size
+        self.img_size = imgsz
         self.stride = stride
         self.files = images + videos
         self.labels = labels
         self.nf = ni + nv  # number of files
         self.video_flag = [False] * ni + [True] * nv
-        self.mode = 'image'
+        self.mode = 'imageandlabel'
         self.auto = auto
         if any(videos):
             self.new_video(videos[0])  # new video
@@ -312,6 +353,7 @@ class LoadImagesAndLabels_custom() :
         if self.count == self.nf:
             raise StopIteration
         image_path = self.files[self.count]
+        img_id = image_path.split('/')[-1].split('.')[0]
         try : 
             label_path = self.labels[self.count]
         except : 
@@ -364,7 +406,8 @@ class LoadImagesAndLabels_custom() :
         img = np.ascontiguousarray(img)
 
         #return image_path, img, img0, self.cap, s
-        return img, img0, targets, image_path, img.shape
+        # img, im0, targets, paths, shapes, img_id
+        return img, img0, targets, image_path, img.shape, img_id
 
     def new_video(self, path):
         self.frame = 0
@@ -375,7 +418,45 @@ class LoadImagesAndLabels_custom() :
         return self.nf  # number of files
 
 
+    @staticmethod
+    def collate_fn(batch):
+        im, im0, label, path, shapes, img_id = zip(*batch)  # transposed
+        for i, lb in enumerate(label):
+            lb[:, 0] = i  # add target image index for build_targets()
+        # img, im0, targets, paths, shapes, img_id
+        return torch.stack(im, 0), torch.stack(im0, 0), torch.cat(label, 0), path, shapes, img_id
 
+    @staticmethod
+    def collate_fn4(batch):
+        img, img0, label, path, shapes, img_id = zip(*batch)  # transposed
+        n = len(shapes) // 4
+        im4, im04, label4, path4, shapes4, img_id4 = [], [], [], path[:n], shapes[:n], img_id[:n]
+
+        ho = torch.tensor([[0.0, 0, 0, 1, 0, 0]])
+        wo = torch.tensor([[0.0, 0, 1, 0, 0, 0]])
+        s = torch.tensor([[1, 1, 0.5, 0.5, 0.5, 0.5]])  # scale
+        for i in range(n):  # zidane torch.zeros(16,3,720,1280)  # BCHW
+            i *= 4
+            if random.random() < 0.5:
+                im = F.interpolate(img[i].unsqueeze(0).float(), scale_factor=2.0, mode='bilinear',
+                                   align_corners=False)[0].type(img[i].type())
+                im0 = F.interpolate(img0[i].unsqueeze(0).float(), scale_factor=2.0, mode='bilinear',
+                                    align_corners=False)[0].type(img0[i].type())
+
+                lb = label[i]
+            else:
+                im = torch.cat((torch.cat((img[i], img[i + 1]), 1), torch.cat((img[i + 2], img[i + 3]), 1)), 2)
+                im0 = torch.cat((torch.cat((img0[i], img0[i + 1]), 1), torch.cat((img0[i + 2], img0[i + 3]), 1)), 2)
+                lb = torch.cat((label[i], label[i + 1] + ho, label[i + 2] + wo, label[i + 3] + ho + wo), 0) * s
+            im4.append(im)
+            im04.append(im0)
+            label4.append(lb)
+
+        for i, lb in enumerate(label4):
+            lb[:, 0] = i  # add target image index for build_targets()
+
+        # img, im0, targets, paths, shapes, img_id
+        return torch.stack(im4, 0), torch.stack(im4, 0), torch.cat(label4, 0), path4, shapes4, img_id4
 
 
 

@@ -28,6 +28,7 @@ from threading import Thread
 import numpy as np
 import torch
 from tqdm import tqdm
+from train import WORLD_SIZE
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[0]  # YOLOv5 root directory
@@ -51,6 +52,7 @@ from prepare_model import *
 from mmdet.datasets import (build_dataloader, build_dataset, replace_ImageToTensor)
 from mmcv import Config
 from mmdet.datasets.pipelines.loading import LoadAnnotations
+from torch.utils.data import DataLoader
 
 def save_one_txt(predn, save_conf, shape, file):
     # Save one txt result
@@ -88,11 +90,14 @@ def save_one_json(predn, jdict, path, class_map):
             'score': round(p[4], 5)})
     
 
-def update(model, data_loader):
-    data = next(iter(data_loader))
+def update(model, dataset):
+    #data = next(iter(dataset))
     img = torch.load('PTQ_yolov5_distill_500.pth')[0]['img']
-    data['img'][0] = img[0].cuda()
-    im0 = data['img'][0]
+    #data[0] = img[0].cuda()
+    #im0 = data[0]
+
+    im0 = img[0].cuda()
+
     # size = (1, 3, 800, 1216)
     # data['img'] = [(torch.randint(high=255, size=size)-128).float()/5418.75]
 
@@ -129,16 +134,16 @@ def run(
         data,
         weights= ROOT / '../checkpoints/yolov5l.pt',  # model.pt path(s)
         source='/home/youngjin/datasets/coco/val',
-        data_config=ROOT / '../config/distill_data_config.py',
+        hyp='',
         evaluate=True,
         batch_size=1,  # batch size
         imgsz=640,  # inference size (pixels)
         classes=None,  # filter by class: --class 0, or --class 0 2 3
+        task='val',
         agnostic_nms=False,  # class-agnostic NMS
         max_det=1000,  # maximum detections per image
         conf_thres=0.45,  # confidence threshold
         iou_thres=0.25,  # NMS IoU threshold
-        task='val',  # train, val, test, speed or study
         device='0,1',  # cuda device, i.e. 0 or 0,1,2,3 or cpu
         workers=8,  # max dataloader workers (per RANK in DDP mode)
         single_cls=False,  # treat as single-class dataset
@@ -155,7 +160,6 @@ def run(
         half=False,  # use FP16 half-precision inference
         dnn=False,  # use OpenCV DNN for ONNX inference
         model=None,
-        dataloader=None,
         save_dir=Path(''),
         plots=False,
         callbacks=Callbacks(),
@@ -173,14 +177,8 @@ def run(
     else:  # called directly
         device = select_device(device, batch_size=batch_size)
 
-        cfg = Config.fromfile(data_config)
-        cfg.data.val.test_mode = True
-        dataset = build_dataset(cfg.data.val)
-        data_loader = build_dataloader(dataset,
-                                        samples_per_gpu=1,
-                                        workers_per_gpu=cfg.data.workers_per_gpu,
-                                        dist=distributed,
-                                        shuffle=False)
+        #cfg = Config.fromfile(data_config)
+        #cfg.data.val.test_mode = True
 
 
         # Directories
@@ -191,8 +189,21 @@ def run(
         # Load model
         model = DetectMultiBackend(weights, device=device, dnn=dnn, data=data, fp16=half)
 
+        stride, pt, jit, engine = model.stride, model.pt, False, False
+        imgsz = check_img_size(imgsz, s=stride)  # check image size
+        half = model.fp16  # FP16 supported on limited backends with CUDA
+        gs = max(int(model.stride), 32)  # grid size (max stride)
+
+        data_loader, dataset = create_dataloader_custom(image_path=source+'/images',
+                                                        label_path=source+'/labels',
+                                                        imgsz=imgsz,
+                                                        batch_size=1,
+                                                        stride=stride,
+                                                        workers=workers)
+
+
         # Distill data
-        update(model, data_loader)
+        update(model, dataset)
         #freeze_model(model)
         print('model updated and froze')
 
@@ -201,9 +212,6 @@ def run(
         print(model)
 
 
-        stride, pt, jit, engine = model.stride, model.pt, False, False
-        imgsz = check_img_size(imgsz, s=stride)  # check image size
-        half = model.fp16  # FP16 supported on limited backends with CUDA
         if engine:
             batch_size = model.batch_size
         else:
@@ -260,20 +268,14 @@ def run(
     #batch_i = 0
     #for im, im0, targets, paths, shapes in dataset :
 
-    targets = LoadAnnotations(with_bbox=True,with_label=True,
-                                with_mask=False,
-                                with_seg=False,
-                                poly2mask=False,
-                                denorm_bbox=False,
-                                file_client_args=dict(backend='disk'))
+    pbar = tqdm(dataset)
 
-    for batch_i, data in enumerate(data_loader) :
+    for batch_i, (img, im0, targets, paths, shapes, img_id) in enumerate(pbar) :
         callbacks.run('on_val_batch_start')
-        im = data['img'][0].to(device)
-        im0 = data['img'][0]
-        shapes = im0.shape
-        img_metas = data['img_metas'][0].data[0][0]
-        img_id = img_metas['ori_filename'].split('.')[0]
+        img = torch.from_numpy(img).to(device)
+        if not (targets is None) :
+            targets = torch.from_numpy(targets).to(device)
+        #img = img.to(device)
         # target_bboxes = data['bbox']
         # target_category_id = data['category_id']
         # targets = torch.cat(target_category_id, target_bboxes, dim=1)
@@ -282,17 +284,17 @@ def run(
         #if cuda:
             
             #im = torch.from_numpy(im).to(device)
-            #im = im.view(1, im.shape[0], im.shape[1],im.shape[2])
+        img = img.view(1, img.shape[0], img.shape[1],img.shape[2])
             #targets = torch.from_numpy(targets).to(device)
-        im = im.half() if half else im.float()  # uint8 to fp16/32
-        im /= 255  # 0 - 255 to 0.0 - 1.0
-        nb, _, height, width = im.shape  # batch size, channels, height, width
+        img = img.half() if half else img.float()  # uint8 to fp16/32
+        img /= 255  # 0 - 255 to 0.0 - 1.0
+        nb, _, height, width = img.shape  # batch size, channels, height, width
         t2 = time_sync()
         dt[0] += t2 - t1
 
         # Inference
         #out, train_out = model(im) if training else model(im, augment=augment, val=True)  # inference, loss outputs
-        out = model(im, augment=augment)  # inference, loss outputs
+        out = model(img, augment=augment)  # inference, loss outputs
         dt[1] += time_sync() - t2
 
         # Loss
@@ -306,10 +308,10 @@ def run(
         out = non_max_suppression(out, conf_thres, iou_thres, classes, agnostic_nms, max_det)
         dt[2] += time_sync() - t3
 
-        if evaluate : 
+        if evaluate and not (targets is None): 
             for si, pred in enumerate(out):
-                bboxes = targets[si]
-                cat_ids = targets[si].view(1,1)
+                cat_ids = targets[si][0].view(1, 1) 
+                bboxes = targets[si][1:5].view(1, 4)
                 nl, npr = cat_ids.shape[0], pred.shape[0]  # number of labels, predictions
                 correct = torch.zeros(npr, niou, dtype=torch.bool, device=device)  # init
                 seen += 1
@@ -321,12 +323,12 @@ def run(
 
                 # Predictions
                 predn = pred.clone()
-                predn[:, :4] = scale_coords(im.shape[2:], predn[:, :4], im0.shape).round()  # native-space pred
+                predn[:, :4] = scale_coords(img.shape[2:], predn[:, :4], im0.shape).round()  # native-space pred
 
                 # Evaluate
                 if nl:
                     tbox = xywh2xyxy(bboxes[:,0:4])  # target boxes
-                    tbox = scale_coords(im.shape[2:], tbox, im0.shape)  # native-space labels
+                    tbox = scale_coords(img.shape[2:], tbox, im0.shape)  # native-space labels
                     category_id = cat_ids[:,0].view(1, 1)
                     labelsn = torch.cat((category_id, tbox), 1)  # native-space labels
                     correct = process_batch(predn, labelsn, iouv)
@@ -344,14 +346,14 @@ def run(
             if save_json:
                 pass
                 #save_one_json(predn, jdict, path, class_map)  # append to COCO-JSON dictionary
-            callbacks.run('on_val_image_end', pred, predn, paths, names, im[si])
+            callbacks.run('on_val_image_end', pred, predn, paths, names, img)
 
         # Plot images
         if plots and batch_i < 3:
             f = save_dir / f'val_batch{batch_i}_labels.jpg'  # labels
-            Thread(target=plot_images, args=(im, targets, paths, f, names), daemon=True).start()
+            Thread(target=plot_images, args=(img, targets, paths, f, names), daemon=True).start()
             f = save_dir / f'val_batch{batch_i}_pred.jpg'  # predictions
-            Thread(target=plot_images, args=(im, output_to_target(out), paths, f, names), daemon=True).start()
+            Thread(target=plot_images, args=(img, output_to_target(out), paths, f, names), daemon=True).start()
 
 
         
@@ -431,8 +433,8 @@ def parse_opt():
     parser.add_argument('--data', type=str, default=ROOT / '../dataset/coco.yaml', help='dataset.yaml path')
     parser.add_argument('--weights', nargs='+', type=str, default=ROOT / 'yolov5l.pt', help='model.pt path(s)')
     parser.add_argument('--source', default='/home/youngjin/datasets/coco/val')
+    parser.add_argument('--hyp', default='../dataset/hyps/hyp.scratch-low.yaml')
     parser.add_argument('--evaluate', default=True)
-    parser.add_argument('--data_config', default=ROOT / '../config/distill_data_config.py')
     parser.add_argument('--batch-size', type=int, default=2, help='batch size')
     parser.add_argument('--imgsz', '--img', '--img-size', nargs='+',type=int, default=[640], help='inference size (pixels)')
     parser.add_argument('--conf-thres', type=float, default=0.5, help='confidence threshold')
@@ -441,7 +443,7 @@ def parse_opt():
     parser.add_argument('--device', default='0,1', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--workers', type=int, default=8, help='max dataloader workers (per RANK in DDP mode)')
     parser.add_argument('--single-cls', action='store_true', help='treat as single-class dataset')
-    parser.add_argument('--augment', action='store_true', help='augmented inference')
+    parser.add_argument('--augment', default=False, help='augmented inference')
     parser.add_argument('--max-det', type=int, default=1000, help='maximum detections per image')
     parser.add_argument('--classes', nargs='+', type=int, help='filter by class: --classes 0, or --classes 0 2 3')
     parser.add_argument('--agnostic-nms', action='store_true', help='class-agnostic NMS')
@@ -454,7 +456,7 @@ def parse_opt():
     parser.add_argument('--project', default=ROOT / '../../runs/quant_val_detect', help='save to project/name')
     parser.add_argument('--name', default='exp', help='save to project/name')
     parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
-    parser.add_argument('--half', action='store_true', help='use FP16 half-precision inference')
+    parser.add_argument('--half', default=False, help='use FP16 half-precision inference')
     parser.add_argument('--dnn', action='store_true', help='use OpenCV DNN for ONNX inference')
     parser.add_argument('--bit_width',default=8)
     parser.add_argument('--mode',default='symmetric')
