@@ -363,11 +363,11 @@ def parse_opt():
     parser.add_argument('--single-cls', action='store_true', help='treat as single-class dataset')
     parser.add_argument('--augment', action='store_true', help='augmented inference')
     parser.add_argument('--verbose', action='store_true', help='report mAP by class')
-    parser.add_argument('--save-txt', default=True, help='save results to *.txt')
-    parser.add_argument('--save-img', default=True, help='save results to *.jpg')
-    parser.add_argument('--save-hybrid', action='store_true', help='save label+prediction hybrid results to *.txt')
+    parser.add_argument('--save-txt', default=False, help='save results to *.txt')
+    parser.add_argument('--save-img', default=False, help='save results to *.jpg')
+    parser.add_argument('--save-hybrid', default=False, help='save label+prediction hybrid results to *.txt')
     parser.add_argument('--save-conf', action='store_true', help='save confidences in --save-txt labels')
-    parser.add_argument('--save-json', default=True, help='save a COCO-JSON results file')
+    parser.add_argument('--save-json', default=False, help='save a COCO-JSON results file')
     parser.add_argument('--project', default=ROOT / '../../runs/val', help='save to project/name')
     parser.add_argument('--name', default='exp', help='save to project/name')
     parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
@@ -375,8 +375,7 @@ def parse_opt():
     parser.add_argument('--dnn', action='store_true', help='use OpenCV DNN for ONNX inference')
     opt = parser.parse_args()
     opt.data = check_yaml(opt.data)  # check YAML
-    opt.save_json |= opt.data.endswith('coco.yaml')
-    opt.save_txt |= opt.save_hybrid
+    #opt.save_json |= opt.data.endswith('coco.yaml')
     print_args(vars(opt))
     return opt
 
