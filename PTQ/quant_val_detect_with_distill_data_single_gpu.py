@@ -28,7 +28,6 @@ from threading import Thread
 import numpy as np
 import torch
 from tqdm import tqdm
-from train import WORLD_SIZE
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[0]  # YOLOv5 root directory
@@ -49,10 +48,6 @@ from utils.torch_utils import select_device, time_sync
 from utils.quant_utils.quant_module import *
 from utils.quant_utils.quant_utils import *
 from prepare_model import *
-from mmdet.datasets import (build_dataloader, build_dataset, replace_ImageToTensor)
-from mmcv import Config
-from mmdet.datasets.pipelines.loading import LoadAnnotations
-from torch.utils.data import DataLoader
 
 def save_one_txt(predn, save_conf, shape, file):
     # Save one txt result
@@ -91,15 +86,9 @@ def save_one_json(predn, jdict, path, class_map):
     
 
 def update(model, dataset):
-    #data = next(iter(dataset))
     img = torch.load('PTQ_yolov5_distill_500.pth')[0]['img']
-    #data[0] = img[0].cuda()
-    #im0 = data[0]
 
     im0 = img[0].cuda()
-
-    # size = (1, 3, 800, 1216)
-    # data['img'] = [(torch.randint(high=255, size=size)-128).float()/5418.75]
 
     _ = model(im0)
 
@@ -177,10 +166,6 @@ def run(
     else:  # called directly
         device = select_device(device, batch_size=batch_size)
 
-        #cfg = Config.fromfile(data_config)
-        #cfg.data.val.test_mode = True
-
-
         # Directories
         save_dir = increment_path(Path(project) / name, exist_ok=exist_ok)  # increment run
         (save_dir / 'labels' if save_txt else save_dir).mkdir(parents=True, exist_ok=True)  # make dir
@@ -226,33 +211,9 @@ def run(
     # Configure
     model.eval()
     cuda = device.type != 'cpu'
-    #is_coco = isinstance(data.get('val'), str) and data['val'].endswith(f'coco{os.sep}val2017.txt')  # COCO dataset
     nc = 1 if single_cls else int(data['nc'])  # number of classes
     iouv = torch.linspace(0.5, 0.95, 10, device=device)  # iou vector for mAP@0.5:0.95
     niou = iouv.numel()
-
-    # Dataloader
-    # if not training:
-    #    if pt and not single_cls:  # check --weights are trained on --data
-    #       ncm = model.model.nc
-    #       assert ncm == nc, f'{weights[0]} ({ncm} classes) trained on different --data than what you passed ({nc} ' \
-    #                         f'classes). Pass correct combination of --weights and --data that are trained together.'
-    #     model.warmup(imgsz=(1 if pt else batch_size, 3, imgsz, imgsz))  # warmup
-    #     pad = 0.0 if task in ('speed', 'benchmark') else 0.5
-    #     rect = False if task == 'benchmark' else pt  # square inference for benchmarks
-    #     task = task if task in ('train', 'val', 'test') else 'val'  # path to train/val/test images
-    #     dataloader = create_dataloader(data[task],
-    #                                    imgsz,
-    #                                    batch_size,
-    #                                    stride,
-    #                                    single_cls,
-    #                                    pad=pad,
-    #                                    rect=rect,
-    #                                    workers=workers,
-    #                                    prefix=colorstr(f'{task}: '))[0]
-
-    # dataloader
-    #dataset = LoadImagesAndLabels_custom(image_path=source + '/images', label_path=source + '/labels', img_size=imgsz, stride=stride, auto=True)
 
     seen = 0
     confusion_matrix = ConfusionMatrix(nc=nc)
@@ -263,10 +224,6 @@ def run(
     loss = torch.zeros(3, device=device)
     jdict, stats, ap, ap_class = [], [], [], []
     callbacks.run('on_val_start')
-    #pbar = tqdm(dataloader, desc=s, bar_format='{l_bar}{bar:10}{r_bar}{bar:-10b}')  # progress bar
-    #for batch_i, (im, targets, paths, shapes) in enumerate(pbar):
-    #batch_i = 0
-    #for im, im0, targets, paths, shapes in dataset :
 
     pbar = tqdm(dataset)
 
@@ -275,15 +232,8 @@ def run(
         img = torch.from_numpy(img).to(device)
         if not (targets is None) :
             targets = torch.from_numpy(targets).to(device)
-        #img = img.to(device)
-        # target_bboxes = data['bbox']
-        # target_category_id = data['category_id']
-        # targets = torch.cat(target_category_id, target_bboxes, dim=1)
         paths = source + '/images/' + img_id + '.jpg'
         t1 = time_sync()
-        #if cuda:
-            
-            #im = torch.from_numpy(im).to(device)
         img = img.view(1, img.shape[0], img.shape[1],img.shape[2])
             #targets = torch.from_numpy(targets).to(device)
         img = img.half() if half else img.float()  # uint8 to fp16/32
@@ -293,7 +243,6 @@ def run(
         dt[0] += t2 - t1
 
         # Inference
-        #out, train_out = model(im) if training else model(im, augment=augment, val=True)  # inference, loss outputs
         out = model(img, augment=augment)  # inference, loss outputs
         dt[1] += time_sync() - t2
 
@@ -302,8 +251,6 @@ def run(
         #    loss += compute_loss([x.float() for x in train_out], targets)[1]  # box, obj, cls
 
         # NMS
-        #targets[:, 2:] *= torch.tensor((width, height, width, height), device=device)  # to pixels
-        #lb = [targets[targets[:, 0] == i, 1:] for i in range(nb)] if save_hybrid else []  # for autolabelling
         t3 = time_sync()
         out = non_max_suppression(out, conf_thres, iou_thres, classes, agnostic_nms, max_det)
         dt[2] += time_sync() - t3
@@ -408,8 +355,6 @@ def run(
             anno = COCO(anno_json)  # init annotations api
             pred = anno.loadRes(pred_json)  # init predictions api
             eval = COCOeval(anno, pred, 'bbox')
-            #if is_coco:
-            #    eval.params.imgIds = [int(Path(x).stem) for x in dataloader.dataset.im_files]  # image IDs to evaluate
             eval.evaluate()
             eval.accumulate()
             eval.summarize()
@@ -417,15 +362,6 @@ def run(
         except Exception as e:
             LOGGER.info(f'pycocotools unable to run: {e}')
 
-    # Return results
-    model.float()  # for training
-    #if not training:
-    #    s = f"\n{len(list(save_dir.glob('labels/*.txt')))} labels saved to {save_dir / 'labels'}" if save_txt else ''
-    #    LOGGER.info(f"Results saved to {colorstr('bold', save_dir)}{s}")
-    maps = np.zeros(nc) + map
-    for i, c in enumerate(ap_class):
-        maps[c] = ap[i]
-    return (mp, mr, map50, map, *(loss.cpu() / len(dataset)).tolist()), maps, t
 
 
 def parse_opt():
@@ -440,7 +376,7 @@ def parse_opt():
     parser.add_argument('--conf-thres', type=float, default=0.5, help='confidence threshold')
     parser.add_argument('--iou-thres', type=float, default=0.45, help='NMS IoU threshold')
     parser.add_argument('--task', default='val', help='train, val, test, speed or study')
-    parser.add_argument('--device', default='0,1', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
+    parser.add_argument('--device', default='0', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--workers', type=int, default=8, help='max dataloader workers (per RANK in DDP mode)')
     parser.add_argument('--single-cls', action='store_true', help='treat as single-class dataset')
     parser.add_argument('--augment', default=False, help='augmented inference')
@@ -477,29 +413,6 @@ def main(opt):
         if opt.conf_thres > 0.001:  # https://github.com/ultralytics/yolov5/issues/1466
             LOGGER.info(f'WARNING: confidence threshold {opt.conf_thres} >> 0.001 will produce invalid mAP values.')
         run(**vars(opt))
-
-    else:
-        weights = opt.weights if isinstance(opt.weights, list) else [opt.weights]
-        opt.half = True  # FP16 for fastest results
-        if opt.task == 'speed':  # speed benchmarks
-            # python val.py --task speed --data coco.yaml --batch 1 --weights yolov5n.pt yolov5s.pt...
-            opt.conf_thres, opt.iou_thres, opt.save_json = 0.25, 0.45, False
-            for opt.weights in weights:
-                run(**vars(opt), plots=False)
-
-        elif opt.task == 'study':  # speed vs mAP benchmarks
-            # python val.py --task study --data coco.yaml --iou 0.7 --weights yolov5n.pt yolov5s.pt...
-            for opt.weights in weights:
-                f = f'study_{Path(opt.data).stem}_{Path(opt.weights).stem}.txt'  # filename to save to
-                x, y = list(range(256, 1536 + 128, 128)), []  # x axis (image sizes), y axis
-                for opt.imgsz in x:  # img-size
-                    LOGGER.info(f'\nRunning {f} --imgsz {opt.imgsz}...')
-                    r, _, t = run(**vars(opt), plots=False)
-                    y.append(r + t)  # results and times
-                np.savetxt(f, y, fmt='%10.4g')  # save
-            os.system('zip -r study.zip study_*.txt')
-            plot_val_study(x=x)  # plot
-
 
 if __name__ == "__main__":
     opt = parse_opt()
