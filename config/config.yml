@@ -15,7 +15,7 @@ noplots : True
 bucket : ""
 #cache : 
 image_weights : False
-device : "0,1"
+device : "0"
 multi_scale : False
 single_cls : False
 optimizer : "SGD"
