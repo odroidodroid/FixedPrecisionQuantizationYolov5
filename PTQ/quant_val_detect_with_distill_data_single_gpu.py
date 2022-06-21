@@ -368,7 +368,7 @@ def parse_opt():
     parser = argparse.ArgumentParser()
     parser.add_argument('--data', type=str, default=ROOT / '../dataset/coco.yaml', help='dataset.yaml path')
     parser.add_argument('--weights', nargs='+', type=str, default=ROOT / 'yolov5l.pt', help='model.pt path(s)')
-    parser.add_argument('--source', default='/home/youngjin/datasets/coco/val')
+    parser.add_argument('--source', default='/home/youngjin/datasets/coco2017/val')
     parser.add_argument('--hyp', default='../dataset/hyps/hyp.scratch-low.yaml')
     parser.add_argument('--evaluate', default=True)
     parser.add_argument('--batch-size', type=int, default=2, help='batch size')
