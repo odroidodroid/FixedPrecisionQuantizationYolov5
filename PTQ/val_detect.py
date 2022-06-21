@@ -113,14 +113,16 @@ def run(
         data,
         weights= ROOT / '../checkpoints/yolov5l.pt',  # model.pt path(s)
         source='/home/youngjin/datasets/coco/val',
+        hyp='',
+        evaluate=True,
         batch_size=1,  # batch size
         imgsz=640,  # inference size (pixels)
         classes=None,  # filter by class: --class 0, or --class 0 2 3
+        task='val',
         agnostic_nms=False,  # class-agnostic NMS
         max_det=1000,  # maximum detections per image
         conf_thres=0.45,  # confidence threshold
         iou_thres=0.25,  # NMS IoU threshold
-        task='val',  # train, val, test, speed or study
         device='0,1',  # cuda device, i.e. 0 or 0,1,2,3 or cpu
         workers=8,  # max dataloader workers (per RANK in DDP mode)
         single_cls=False,  # treat as single-class dataset
@@ -131,13 +133,12 @@ def run(
         save_hybrid=False,  # save label+prediction hybrid results to *.txt
         save_conf=False,  # save confidences in --save-txt labels
         save_json=True,  # save a COCO-JSON results file
-        project=ROOT / '../../runs/val_detect',  # save to project/name
+        project=ROOT / '../../runs/quant_val_detect',  # save to project/name
         name='exp',  # save to project/name
         exist_ok=False,  # existing project/name ok, do not increment
         half=False,  # use FP16 half-precision inference
         dnn=False,  # use OpenCV DNN for ONNX inference
         model=None,
-        dataloader=None,
         save_dir=Path(''),
         plots=False,
         callbacks=Callbacks(),
@@ -158,11 +159,23 @@ def run(
         (save_dir / 'images' if save_txt else save_dir).mkdir(parents=True, exist_ok=True)  # make dir
 
 
+        data_loader, dataset = create_dataloader_custom(image_path=source+'/images',
+                                                        label_path=source+'/labels',
+                                                        imgsz=imgsz,
+                                                        batch_size=1,
+                                                        stride=stride,
+                                                        workers=workers)
+
+
+
         # Load model
         model = DetectMultiBackend(weights, device=device, dnn=dnn, data=data, fp16=half)
         stride, pt, jit, engine = model.stride, model.pt, False, False
         imgsz = check_img_size(imgsz, s=stride)  # check image size
         half = model.fp16  # FP16 supported on limited backends with CUDA
+
+
+
         if engine:
             batch_size = model.batch_size
         else:
@@ -203,7 +216,6 @@ def run(
     #                                    prefix=colorstr(f'{task}: '))[0]
 
     # dataloader
-    dataset = LoadImagesAndLabels_custom(image_path=source + '/images', label_path=source + '/labels', img_size=imgsz, stride=stride, auto=True)
 
     seen = 0
     confusion_matrix = ConfusionMatrix(nc=nc)
@@ -214,24 +226,25 @@ def run(
     loss = torch.zeros(3, device=device)
     jdict, stats, ap, ap_class = [], [], [], []
     callbacks.run('on_val_start')
-    #pbar = tqdm(dataloader, desc=s, bar_format='{l_bar}{bar:10}{r_bar}{bar:-10b}')  # progress bar
-    batch_i = 0
-    for im, im0, targets, paths, shapes in dataset :
+    pbar = tqdm(dataset)
+
+    for batch_i, (img, im0, targets, paths, shapes, img_id) in enumerate(pbar) :
         callbacks.run('on_val_batch_start')
-        t1 = time_sync()
-        if cuda:
-            im = torch.from_numpy(im).to(device)
-            im = im.view(1, im.shape[0], im.shape[1],im.shape[2])
+        img = torch.from_numpy(img).to(device)
+        if not (targets is None) :
             targets = torch.from_numpy(targets).to(device)
-        im = im.half() if half else im.float()  # uint8 to fp16/32
-        im /= 255  # 0 - 255 to 0.0 - 1.0
-        nb, _, height, width = im.shape  # batch size, channels, height, width
+        paths = source + '/images/' + img_id + '.jpg'
+        t1 = time_sync()
+        img = img.view(1, img.shape[0], img.shape[1],img.shape[2])
+            #targets = torch.from_numpy(targets).to(device)
+        img = img.half() if half else img.float()  # uint8 to fp16/32
+        img /= 255  # 0 - 255 to 0.0 - 1.0
+        nb, _, height, width = img.shape  # batch size, channels, height, width
         t2 = time_sync()
         dt[0] += t2 - t1
 
         # Inference
-        #out, train_out = model(im) if training else model(im, augment=augment, val=True)  # inference, loss outputs
-        out = model(im, augment=augment)  # inference, loss outputs
+        out = model(img, augment=augment)  # inference, loss outputs
         dt[1] += time_sync() - t2
 
         # Loss
@@ -239,54 +252,49 @@ def run(
         #    loss += compute_loss([x.float() for x in train_out], targets)[1]  # box, obj, cls
 
         # NMS
-        #targets[:, 2:] *= torch.tensor((width, height, width, height), device=device)  # to pixels
-        #lb = [targets[targets[:, 0] == i, 1:] for i in range(nb)] if save_hybrid else []  # for autolabelling
         t3 = time_sync()
         out = non_max_suppression(out, conf_thres, iou_thres, classes, agnostic_nms, max_det)
         dt[2] += time_sync() - t3
 
-        # Metrics
-        for si, pred in enumerate(out):
-            labels = targets[si]
-            labels = labels.view(1,5) 
-            nl, npr = labels.shape[0], pred.shape[0]  # number of labels, predictions
-            path = paths.split('/')
-            correct = torch.zeros(npr, niou, dtype=torch.bool, device=device)  # init
-            seen += 1
+        if evaluate and not (targets is None): 
+            for si, pred in enumerate(out):
+                cat_ids = targets[si][0].view(1, 1) 
+                bboxes = targets[si][1:5].view(1, 4)
+                nl, npr = cat_ids.shape[0], pred.shape[0]  # number of labels, predictions
+                correct = torch.zeros(npr, niou, dtype=torch.bool, device=device)  # init
+                seen += 1
 
-            if npr == 0:
+                if npr == 0:
+                    if nl:
+                        stats.append((correct, *torch.zeros((3, 0), device=device)))
+                    continue
+
+                # Predictions
+                predn = pred.clone()
+                predn[:, :4] = scale_coords(img.shape[2:], predn[:, :4], im0.shape).round()  # native-space pred
+
+                # Evaluate
                 if nl:
-                    stats.append((correct, *torch.zeros((3, 0), device=device)))
-                continue
-
-            # Predictions
-            if single_cls:
-                pred[:, 5] = 0
-            predn = pred.clone()
-            predn[:, :4] = scale_coords(im.shape[2:], predn[:, :4], im0.shape).round()  # native-space pred
-
-            # Evaluate
-            if nl:
-                tbox = xywh2xyxy(labels[:,1:5])  # target boxes
-                tbox = scale_coords(im.shape[2:], tbox, im0.shape)  # native-space labels
-                category_id = labels[:,0].view(1, 1)
-                labelsn = torch.cat((category_id, tbox), 1)  # native-space labels
-                correct = process_batch(predn, labelsn, iouv)
-                if plots:
-                    confusion_matrix.process_batch(predn, labelsn)
-            stats.append((correct, pred[:, 4], pred[:, 5], labels[:, 0]))  # (correct, conf, pcls, tcls)
+                    tbox = xywh2xyxy(bboxes[:,0:4])  # target boxes
+                    tbox = scale_coords(img.shape[2:], tbox, im0.shape)  # native-space labels
+                    category_id = cat_ids[:,0].view(1, 1)
+                    labelsn = torch.cat((category_id, tbox), 1)  # native-space labels
+                    correct = process_batch(predn, labelsn, iouv)
+                    if plots:
+                        confusion_matrix.process_batch(predn, labelsn)
+                stats.append((correct, pred[:, 4], pred[:, 5], cat_ids[:, 0]))  # (correct, conf, pcls, tcls)
 
             # Save/log
             if save_txt:
-                save_one_txt(predn, save_conf, shapes, file=save_dir / 'labels' / (path[-1].split('.')[0] + '.txt'))
+                save_one_txt(predn, save_conf, shapes, file=save_dir / 'labels' / (img_id + '.txt'))
             if save_img :
                 save_one_image(predn, names, save_conf, shapes, 
-                file=save_dir / 'images' / (path[-1].split('.')[0] + '.jpg'), img_id=path[-1].split('.')[0],
+                file=save_dir / 'images' / (img_id + '.jpg'), img_id=img_id,
                 im0=im0)
             if save_json:
                 pass
                 #save_one_json(predn, jdict, path, class_map)  # append to COCO-JSON dictionary
-            callbacks.run('on_val_image_end', pred, predn, paths, names, im[si])
+            callbacks.run('on_val_image_end', pred, predn, paths, names, img)
         # Plot images
         if plots and batch_i < 3:
             f = save_dir / f'val_batch{batch_i}_labels.jpg'  # labels
@@ -368,7 +376,9 @@ def parse_opt():
     parser.add_argument('--data', type=str, default=ROOT / '../dataset/coco.yaml', help='dataset.yaml path')
     parser.add_argument('--weights', nargs='+', type=str, default=ROOT / 'yolov5l.pt', help='model.pt path(s)')
     parser.add_argument('--source', default='/home/youngjin/datasets/coco/val')
+    parser.add_argument('--hyp', default='../dataset/hyps/hyp.scratch-low.yaml')
     parser.add_argument('--batch-size', type=int, default=2, help='batch size')
+    parser.add_argument('--evaluate', default=True)
     parser.add_argument('--imgsz', '--img', '--img-size', nargs='+',type=int, default=[640], help='inference size (pixels)')
     parser.add_argument('--conf-thres', type=float, default=0.5, help='confidence threshold')
     parser.add_argument('--iou-thres', type=float, default=0.45, help='NMS IoU threshold')
