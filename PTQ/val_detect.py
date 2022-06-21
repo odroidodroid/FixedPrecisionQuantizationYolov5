@@ -231,11 +231,11 @@ def run(
 
     for batch_i, (img, im0, targets, paths, shapes, img_id) in enumerate(pbar) :
         callbacks.run('on_val_batch_start')
+        t1 = time_sync()
         img = torch.from_numpy(img).to(device)
         if not (targets is None) :
             targets = torch.from_numpy(targets).to(device)
         paths = source + '/images/' + img_id + '.jpg'
-        t1 = time_sync()
         img = img.view(1, img.shape[0], img.shape[1],img.shape[2])
             #targets = torch.from_numpy(targets).to(device)
         img = img.half() if half else img.float()  # uint8 to fp16/32
@@ -257,13 +257,13 @@ def run(
         out = non_max_suppression(out, conf_thres, iou_thres, classes, agnostic_nms, max_det)
         dt[2] += time_sync() - t3
 
+        seen += 1
         if evaluate and not (targets is None): 
             for si, pred in enumerate(out):
                 cat_ids = targets[si][0].view(1, 1) 
                 bboxes = targets[si][1:5].view(1, 4)
                 nl, npr = cat_ids.shape[0], pred.shape[0]  # number of labels, predictions
                 correct = torch.zeros(npr, niou, dtype=torch.bool, device=device)  # init
-                seen += 1
 
                 if npr == 0:
                     if nl:
@@ -362,14 +362,14 @@ def run(
             LOGGER.info(f'pycocotools unable to run: {e}')
 
     # Return results
-    model.float()  # for training
+    #model.float()  # for training
     #if not training:
     #    s = f"\n{len(list(save_dir.glob('labels/*.txt')))} labels saved to {save_dir / 'labels'}" if save_txt else ''
     #    LOGGER.info(f"Results saved to {colorstr('bold', save_dir)}{s}")
-    maps = np.zeros(nc) + map
-    for i, c in enumerate(ap_class):
-        maps[c] = ap[i]
-    return (mp, mr, map50, map, *(loss.cpu() / len(dataset)).tolist()), maps, t
+    #maps = np.zeros(nc) + map
+    #for i, c in enumerate(ap_class):
+    #    maps[c] = ap[i]
+    #return (mp, mr, map50, map, *(loss.cpu() / len(dataset)).tolist()), maps, t
 
 
 def parse_opt():
