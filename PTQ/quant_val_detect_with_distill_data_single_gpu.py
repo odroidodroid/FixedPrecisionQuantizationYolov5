@@ -386,7 +386,7 @@ def parse_opt():
     parser.add_argument('--verbose', action='store_true', help='report mAP by class')
     parser.add_argument('--save-txt', default=True, help='save results to *.txt')
     parser.add_argument('--save-img', default=True)
-    parser.add_argument('--save-hybrid', action='store_true', help='save label+prediction hybrid results to *.txt')
+    parser.add_argument('--save-hybrid', default=False, help='save label+prediction hybrid results to *.txt')
     parser.add_argument('--save-conf', action='store_true', help='save confidences in --save-txt labels')
     parser.add_argument('--save-json', default=False, help='save a COCO-JSON results file')
     parser.add_argument('--project', default=ROOT / '../../runs/quant_val_detect', help='save to project/name')
@@ -400,8 +400,8 @@ def parse_opt():
     opt = parser.parse_args()
     opt.imgsz *= 2 if len(opt.imgsz) == 1 else 1  # expand
     opt.data = check_yaml(opt.data)  # check YAML
-    opt.save_json |= opt.data.endswith('coco.yaml')
-    opt.save_txt |= opt.save_hybrid
+    #opt.save_json |= opt.data.endswith('coco.yaml')
+    #opt.save_txt |= opt.save_hybrid
     print_args(vars(opt))
     return opt
 
