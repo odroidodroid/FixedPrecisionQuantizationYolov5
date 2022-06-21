@@ -392,7 +392,7 @@ def parse_opt():
     parser.add_argument('--project', default=ROOT / '../../runs/quant_val_detect', help='save to project/name')
     parser.add_argument('--name', default='exp', help='save to project/name')
     parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
-    parser.add_argument('--half', default=False, help='use FP16 half-precision inference')
+    parser.add_argument('--half', default=True, help='use FP16 half-precision inference')
     parser.add_argument('--dnn', action='store_true', help='use OpenCV DNN for ONNX inference')
     parser.add_argument('--bit_width',default=8)
     parser.add_argument('--mode',default='symmetric')
