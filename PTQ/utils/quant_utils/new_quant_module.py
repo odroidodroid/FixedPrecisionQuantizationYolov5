@@ -15,6 +15,14 @@ def gcd(inputA, inputB) :
     return inputA
 
 
+class QuantConcat(Module) :
+    def __init__() :
+        super().__init__()
+
+    def forward(self, x) :
+        pass
+
+
 class QuantLinear(Module):
     """
     Class to quantize weights of given linear layer
@@ -109,16 +117,18 @@ class QuantLinear(Module):
         # perform the quantization
         if not self.full_precision_flag:
             if self.quant_mode == 'symmetric':
-                x_transform = x.data.view(self.in_channels, -1)
-                x_min, x_max = x_transform.min(dim=1).values, x_transform.max(dim=1).values
+                # x_transform = x.data.view(self.in_channels, -1)
+                # x_min, x_max = x_transform.min(dim=1).values, x_transform.max(dim=1).values
 
-                x_scale = symmetric_linear_quantization_params_act(self.activation_bit, x_min, x_max)
-                x_int = symmetric_linear_quantize(x, x_scale)
+                # x_scale = symmetric_linear_quantization_params_act(self.activation_bit, x_min, x_max)
+                # x_int = symmetric_linear_quantize(x, x_scale)
+
+                x_int = torch.round((x[0]/x[1]) * self.x_scale)
 
                 weight_integer = self.weight_function(self.weight, self.weight_bit, self.weight_scale)
                 y = ste_round.apply(F.linear(x_int, self.weight_integer))
-                y_fp = symmetric_linear_dequantize(y, x_scale, x_zeropoint)
-                return y_fp
+                #y_fp = symmetric_linear_dequantize(y, x_scale, x_zeropoint)
+                return (y, self.weight_scale * self.x_scale)
 
             elif self.quant_mode == 'asymmetric':
                 x_transform = x.data.view(self.in_channels, -1)
@@ -149,13 +159,12 @@ class QuantBatchNorm2d(Module) :
         self.fix_BN = fix_BN
         self.training_BN_mode = fix_BN
         self.fix_BN_threshold = fix_BN_threshold
+        self.bn = nn.BatchNorm2d()
 
     def __repr__(self):
         s = super(QuantBatchNorm2d, self).__repr__()
         s = "(" + s + " )"
         return s
-
-
 
     def set_param(self, bn) :
         self.running_mean = bn.running_mean.data.clone()
@@ -182,14 +191,19 @@ class QuantBatchNorm2d(Module) :
     def forward(self, x) :
 
         if not self.full_precision_flag :
-            weight = self.bn_weight / (torch.sqrt(self.running_var + self.eps))
-            bias = self.bn_bias - weight * self.running_mean
+            # weight = self.bn_weight / (torch.sqrt(self.running_var + self.eps))
+            # bias = self.bn_bias - weight * self.running_mean
 
-            x *= weight.view(1, -1, 1, 1)
-            x += bias.view(1, -1, 1, 1)
+            # x *= weight.view(1, -1, 1, 1)
+            # x += bias.view(1, -1, 1, 1)
 
-            return x
+            x[0] = self.bn(x[0])
+
+            return x[0], x[1]
         else :
+
+            x[0] = self.bn(x[0])
+
             return x
 
 class QuantMaxPool2d(Module):
@@ -222,7 +236,7 @@ class QuantMaxPool2d(Module):
         return s
 
     def forward(self, x):
-        x = self.pool(x)
+        x[0] = self.pool(x[0])
         return x
 
 
@@ -246,7 +260,7 @@ class QuantDropout(Module):
         return s
 
     def forward(self, x):
-        x = self.dropout(x)
+        x[0] = self.dropout(x[0])
 
         return x
 
@@ -263,7 +277,7 @@ class QuantUpsample(Module) :
         return s
     
     def forward(self, x) :
-        x = self.upsample(x)
+        x[0] = self.upsample(x[0])
         return x
 
 class QuantAveragePool2d(Module):
@@ -427,11 +441,13 @@ class QuantConv2d(Module):
         # quantize activation
 
         if self.quant_mode == "symmetric":
-            x_transform = x.data.contiguous().view(self.in_channels, -1)
-            x_min, x_max = x_transform.min(), x_transform.max()
+            # x_transform = x.data.contiguous().view(self.in_channels, -1)
+            # x_min, x_max = x_transform.min(), x_transform.max()
             
-            x_scale = symmetric_linear_quantization_params_act(self.activation_bit, x_min, x_max)
-            x_int = symmetric_linear_quantize(x, x_scale)
+            # x_scale = symmetric_linear_quantization_params_act(self.activation_bit, x_min, x_max)
+            # x_int = symmetric_linear_quantize(x, x_scale)
+
+            x_int = torch.round((x[0]/x[1]) * self.x_scale)
 
             self.weight_function = SymmetricQuantFunction.apply
             weight_integer = self.weight_function(self.weight, self.weight_bit, self.weight_scale)
@@ -439,8 +455,8 @@ class QuantConv2d(Module):
 
             y =  ste_round.apply(F.conv2d(x_int, weight_integer, bias_integer,
             self.stride, self.padding, self.dilation, self.groups)) ### ste_round ??????
-            y_fp = symmetric_linear_dequantize_with_bias(y, x_scale, self.weight_scale, self.bias_scale, bias_integer)
-            return y_fp
+            #y_fp = symmetric_linear_dequantize_with_bias(y, x_scale, self.weight_scale, self.bias_scale, bias_integer)
+            return (y, self.weight_scale * self.x_scale)
 
         elif self.quant_mode =='asymmetric':
             x_transform = x.data.contiguous().view(self.in_channels, -1)
