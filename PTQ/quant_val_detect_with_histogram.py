@@ -40,7 +40,7 @@ from utils.callbacks import Callbacks
 from utils.datasets import *
 from utils.general import (LOGGER, check_dataset, check_img_size, check_requirements, check_yaml,
                            coco80_to_coco91_class, colorstr, increment_path, non_max_suppression, print_args,
-                           scale_coords, xywh2xyxy, xyxy2xywh, xywh2xyxy_custom)
+                           scale_coords, xywh2xyxy, xyxy2xywh, xywh2xyxy_custom,xywh2xyxy_custom2,coco91_to_coco80_class)
 from utils.metrics import ConfusionMatrix, ap_per_class, box_iou
 from utils.plots import output_to_target, plot_images, plot_val_study
 from utils.plots import *
@@ -226,6 +226,7 @@ def run(
     callbacks.run('on_val_start')
 
     pbar = tqdm(dataset)
+    eps = 1e-16
 
     for batch_i, (img, im0, targets, paths, shapes, img_id) in enumerate(pbar) :
         t1 = time_sync()
@@ -258,8 +259,8 @@ def run(
 
         if evaluate and not (targets is None): 
             for si, pred in enumerate(out):
-                cat_ids = targets[si][0].view(1, 1) 
-                bboxes = targets[si][1:5].view(1, 4)
+                pred = pred.view(-1, 6)
+                cat_ids, bboxes = coco91_to_coco80_class(targets) 
                 nl, npr = cat_ids.shape[0], pred.shape[0]  # number of labels, predictions
                 correct = torch.zeros(npr, niou, dtype=torch.bool, device=device)  # init
 
@@ -270,19 +271,17 @@ def run(
 
                 # Predictions
                 predn = pred.clone()
-                predn[:, :4] = scale_coords(img.shape[2:], predn[:, :4], im0.shape).round()  # native-space pred
+                predn[:, :4] = scale_coords(img.shape[2:], predn[:, :4], im0.shape)  # native-space pred
 
                 # Evaluate
                 if nl:
-                    tbox = xywh2xyxy(bboxes[:,0:4])  # target boxes
-                    tbox = scale_coords(img.shape[2:], tbox, im0.shape)  # native-space labels
-                    category_id = cat_ids[:,0].view(1, 1)
-                    labelsn = torch.cat((category_id, tbox), 1)  # native-space labels
+                    bboxes = xywh2xyxy_custom2(bboxes)
+                    labelsn = torch.cat((cat_ids, bboxes), 1)  # native-space labels
                     correct = process_batch(predn, labelsn, iouv)
                     if plots:
                         confusion_matrix.process_batch(predn, labelsn)
                 stats.append((correct, pred[:, 4], pred[:, 5], cat_ids[:, 0]))  # (correct, conf, pcls, tcls)
-
+            
             # Save/log
             if save_txt:
                 save_one_txt(predn, save_conf, shapes, file=save_dir / 'labels' / (img_id + '.txt'))
@@ -290,77 +289,92 @@ def run(
                 save_one_image(predn, names, save_conf, shapes, 
                 file=save_dir / 'images' / (img_id + '.jpg'), img_id=img_id,
                 im0=im0)
+        
             if save_json:
                 pass
                 #save_one_json(predn, jdict, path, class_map)  # append to COCO-JSON dictionary
             callbacks.run('on_val_image_end', pred, predn, paths, names, img)
-
         # Plot images
         if plots and batch_i < 3:
             f = save_dir / f'val_batch{batch_i}_labels.jpg'  # labels
-            Thread(target=plot_images, args=(img, targets, paths, f, names), daemon=True).start()
+            Thread(target=plot_images, args=(im0, targets, paths, f, names), daemon=True).start()
             f = save_dir / f'val_batch{batch_i}_pred.jpg'  # predictions
-            Thread(target=plot_images, args=(img, output_to_target(out), paths, f, names), daemon=True).start()
+            Thread(target=plot_images, args=(im0, output_to_target(out), paths, f, names), daemon=True).start()
 
-
-        
         callbacks.run('on_val_batch_end')
 
 
 
-    # Compute metrics
+    # Compute metric
     stats = [torch.cat(x, 0).cpu().numpy() for x in zip(*stats)]  # to numpy
-    if len(stats) and stats[0].any():
-        tp, fp, p, r, f1, ap, ap_class = ap_per_class(*stats, plot=plots, save_dir=save_dir, names=names)
-        ap50, ap = ap[:, 0], ap.mean(1)  # AP@0.5, AP@0.5:0.95
-        mp, mr, map50, map = p.mean(), r.mean(), ap50.mean(), ap.mean()
-        nt = np.bincount(stats[3].astype(np.int64), minlength=nc)  # number of targets per class
-    else:
-        nt = torch.zeros(1)
+    tp, conf, pred_cls, target_cls = stats
 
-    # Print results
-    pf = '%20s' + '%11i' * 2 + '%11.3g' * 4  # print format
-    LOGGER.info(pf % ('all', seen, nt.sum(), mp, mr, map50, map))
+    # i = np.argsort(-conf.cpu().detach().numpy())
+    # tp, conf, pred_cls = tp[i], conf[i], pred_cls[i]
+    n_l = target_cls.shape[0]
+    fpc = (1-tp).cumsum()[-1]
+    tpc = tp.cumsum()[-1]
 
-    # Print results per class
-    if (verbose or (nc < 50 and not training)) and nc > 1 and len(stats):
-        for i, c in enumerate(ap_class):
-            LOGGER.info(pf % (names[c], seen, nt[c], p[i], r[i], ap50[i], ap[i]))
+    recall = tpc / (n_l + eps)
+    precision = tpc / (tpc + fpc)
 
-    # Print speeds
-    t = tuple(x / seen * 1E3 for x in dt)  # speeds per image
-    if not training:
-        shape = (batch_size, 3, imgsz, imgsz)
-        LOGGER.info(f'Speed: %.1fms pre-process, %.1fms inference, %.1fms NMS per image at shape {shape}' % t)
+    print('cumsum recall : {}, precision : {}'.format(recall, precision))
 
-    # Plots
-    if plots:
-        confusion_matrix.plot(save_dir=save_dir, names=list(names.values()))
-        callbacks.run('on_val_end')
 
-    # Save JSON
-    if save_json and len(jdict):
-        w = Path(weights[0] if isinstance(weights, list) else weights).stem if weights is not None else ''  # weights
-        anno_json = str(Path(data.get('path', '../coco')) / 'annotations/instances_val2017.json')  # annotations json
-        pred_json = str(save_dir / f"{w}_predictions.json")  # predictions json
-        LOGGER.info(f'\nEvaluating pycocotools mAP... saving {pred_json}...')
-        with open(pred_json, 'w') as f:
-            json.dump(jdict, f)
 
-        try:  # https://github.com/cocodataset/cocoapi/blob/master/PythonAPI/pycocoEvalDemo.ipynb
-            check_requirements(['pycocotools'])
-            from pycocotools.coco import COCO
-            from pycocotools.cocoeval import COCOeval
+    # # Compute metrics
+    # stats = [torch.cat(x, 0).cpu().numpy() for x in zip(*stats)]  # to numpy
+    # if len(stats) and stats[0].any():
+    #     tp, fp, p, r, f1, ap, ap_class = ap_per_class(*stats, plot=plots, save_dir=save_dir, names=names)
+    #     ap50, ap = ap[:, 0], ap.mean(1)  # AP@0.5, AP@0.5:0.95
+    #     mp, mr, map50, map = p.mean(), r.mean(), ap50.mean(), ap.mean()
+    #     nt = np.bincount(stats[3].astype(np.int64), minlength=nc)  # number of targets per class
+    # else:
+    #     nt = torch.zeros(1)
 
-            anno = COCO(anno_json)  # init annotations api
-            pred = anno.loadRes(pred_json)  # init predictions api
-            eval = COCOeval(anno, pred, 'bbox')
-            eval.evaluate()
-            eval.accumulate()
-            eval.summarize()
-            map, map50 = eval.stats[:2]  # update results (mAP@0.5:0.95, mAP@0.5)
-        except Exception as e:
-            LOGGER.info(f'pycocotools unable to run: {e}')
+    # # Print results
+    # pf = '%20s' + '%11i' * 2 + '%11.3g' * 4  # print format
+    # LOGGER.info(pf % ('all', seen, nt.sum(), mp, mr, map50, map))
+
+    # # Print results per class
+    # if (verbose or (nc < 50 and not training)) and nc > 1 and len(stats):
+    #     for i, c in enumerate(ap_class):
+    #         LOGGER.info(pf % (names[c], seen, nt[c], p[i], r[i], ap50[i], ap[i]))
+
+    # # Print speeds
+    # t = tuple(x / seen * 1E3 for x in dt)  # speeds per image
+    # if not training:
+    #     shape = (batch_size, 3, imgsz, imgsz)
+    #     LOGGER.info(f'Speed: %.1fms pre-process, %.1fms inference, %.1fms NMS per image at shape {shape}' % t)
+
+    # # Plots
+    # if plots:
+    #     confusion_matrix.plot(save_dir=save_dir, names=list(names.values()))
+    #     callbacks.run('on_val_end')
+
+    # # Save JSON
+    # if save_json and len(jdict):
+    #     w = Path(weights[0] if isinstance(weights, list) else weights).stem if weights is not None else ''  # weights
+    #     anno_json = str(Path(data.get('path', '../coco')) / 'annotations/instances_val2017.json')  # annotations json
+    #     pred_json = str(save_dir / f"{w}_predictions.json")  # predictions json
+    #     LOGGER.info(f'\nEvaluating pycocotools mAP... saving {pred_json}...')
+    #     with open(pred_json, 'w') as f:
+    #         json.dump(jdict, f)
+
+    #     try:  # https://github.com/cocodataset/cocoapi/blob/master/PythonAPI/pycocoEvalDemo.ipynb
+    #         check_requirements(['pycocotools'])
+    #         from pycocotools.coco import COCO
+    #         from pycocotools.cocoeval import COCOeval
+
+    #         anno = COCO(anno_json)  # init annotations api
+    #         pred = anno.loadRes(pred_json)  # init predictions api
+    #         eval = COCOeval(anno, pred, 'bbox')
+    #         eval.evaluate()
+    #         eval.accumulate()
+    #         eval.summarize()
+    #         map, map50 = eval.stats[:2]  # update results (mAP@0.5:0.95, mAP@0.5)
+    #     except Exception as e:
+    #         LOGGER.info(f'pycocotools unable to run: {e}')
 
 
 

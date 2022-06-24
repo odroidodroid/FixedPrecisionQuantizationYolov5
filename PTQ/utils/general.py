@@ -680,6 +680,46 @@ def coco80_to_coco91_class():  # converts 80-index (val2014) to 91-index (paper)
     return x
 
 
+
+def coco91_to_coco80_class(x) : 
+    coco91dict = {0:'person', 1:'bicycle', 2:'car', 3:'motorcycle', 4:'airplane', 5:'bus', 6:'train', 7:'truck', 8:'boat', 9:'traffic light',
+        10:'fire hydrant', 11:'street sign', 12:'stop sign', 13:'parking meter', 14:'bench', 15:'bird', 16:'cat', 17:'dog', 18:'horse', 19:'sheep', 20:'cow',
+        21:'elephant', 22:'bear', 23:'zebra', 24:'giraffe', 25:'hat', 26:'backpack', 27:'umbrella', 28:'shoe', 29:'eye glasses',30:'handbag', 31:'tie', 32:'suitcase', 33:'frisbee',
+        34:'skis', 35:'snowboard', 36:'sports ball', 37:'kite', 38:'baseball bat', 39:'baseball glove', 40:'skateboard', 41:'surfboard',
+        42:'tennis racket', 43:'bottle', 44:'plate', 45:'wine glass', 46:'cup', 47:'fork', 48:'knife', 49:'spoon', 50:'bowl', 51:'banana', 52:'apple',
+        53:'sandwich', 54:'orange', 55:'broccoli', 56:'carrot', 57:'hot dog', 58:'pizza', 59:'donut', 60:'cake', 61:'chair', 62:'couch',
+        63:'potted plant', 64:'bed', 65:'mirror', 66:'dining table', 67:'window', 68:'desk', 69:'toilet', 70:'door', 71:'tv', 72:'laptop', 73:'mouse', 74:'remote', 75:'keyboard', 76:'cell phone',
+        77:'microwave', 78:'oven', 79:'toaster', 80:'sink', 81:'refrigerator', 82:'blender', 83:'book', 84:'clock', 85:'vase', 86:'scissors', 87:'teddy bear',
+        88:'hair drier', 89:'toothbrush',91:'hair brush'}
+
+    coco80dict = {0:'person', 1:'bicycle', 2:'car', 3:'motorcycle', 4:'airplane', 5:'bus', 6:'train', 7:'truck', 8:'boat', 9:'traffic light',
+        10:'fire hydrant', 11:'stop sign', 12:'parking meter', 13:'bench', 14:'bird', 15:'cat', 16:'dog', 17:'horse', 18:'sheep', 19:'cow',
+        20:'elephant', 21:'bear', 22:'zebra', 23:'giraffe', 24:'backpack', 25:'umbrella', 26:'handbag', 27:'tie', 28:'suitcase', 29:'frisbee',
+        30:'skis', 31:'snowboard', 32:'sports ball', 33:'kite', 34:'baseball bat', 35:'baseball glove', 36:'skateboard', 37:'surfboard',
+        38:'tennis racket', 39:'bottle', 40:'wine glass', 41:'cup', 42:'fork', 43:'knife', 44:'spoon', 45:'bowl', 46:'banana', 47:'apple',
+        48:'sandwich', 49:'orange', 50:'broccoli', 51:'carrot', 52:'hot dog', 53:'pizza', 54:'donut', 55:'cake', 56:'chair', 57:'couch',
+        58:'potted plant', 59:'bed', 60:'dining table', 61:'toilet', 62:'tv', 63:'laptop', 64:'mouse', 65:'remote', 66:'keyboard', 67:'cell phone',
+        68:'microwave', 69:'oven', 70:'toaster', 71:'sink', 72:'refrigerator', 73:'book', 74:'clock', 75:'vase', 76:'scissors', 77:'teddy bear',
+        78:'hair drier', 79:'toothbrush'}
+    
+    cat_ids = x[:, 0]
+    bboxes = x[:, 1:5]
+
+    new_cat_ids = []
+    new_bboxes = []
+
+    cat_ids = cat_ids.cpu().detach().numpy()
+    bboxes = bboxes.cpu().detach().numpy()
+    for index, v in enumerate(cat_ids) :
+        value = coco91dict.get(v)
+        if value in coco80dict.values() :
+            key = list(coco80dict.keys())[list(coco80dict.values()).index(value)]
+            new_cat_ids.append([float(key)-1.0])
+            new_bboxes.append(bboxes[index])
+    new_cat_ids = torch.tensor(new_cat_ids).view(-1, 1).cuda()
+    new_bboxes = torch.tensor(new_bboxes).view(-1, 4).cuda()
+    return new_cat_ids, new_bboxes
+
 def xyxy2xywh(x):
     # Convert nx4 boxes from [x1, y1, x2, y2] to [x, y, w, h] where xy1=top-left, xy2=bottom-right
     y = x.clone() if isinstance(x, torch.Tensor) else np.copy(x)
@@ -698,6 +738,16 @@ def xywh2xyxy(x):
     y[:, 2] = x[:, 0] + x[:, 2] / 2  # bottom right x
     y[:, 3] = x[:, 1] + x[:, 3] / 2  # bottom right y
     return y
+
+def xywh2xyxy_custom2(x):
+    # Convert nx4 boxes from [x, y, w, h] to [x1, y1, x2, y2] where xy1=top-left, xy2=bottom-right
+    y = x.clone() if isinstance(x, torch.Tensor) else np.copy(x)
+    y[:, 0] = x[:, 0]  # top left x
+    y[:, 1] = x[:, 1]  # top left y
+    y[:, 2] = x[:, 0] + x[:, 2]  # bottom right x
+    y[:, 3] = x[:, 1] + x[:, 3]  # bottom right y
+    return y
+
 
 def xywh2xyxy_custom(x):
     # Convert nx4 boxes from [x, y, w, h] to [x1, y1, x2, y2] where xy1=top-left, xy2=bottom-right

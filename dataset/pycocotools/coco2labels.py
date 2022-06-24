@@ -24,7 +24,7 @@ def coco_labels (anno_path) :
         anno_dict = annotations[anno]
         anno_img_id = str(anno_dict['image_id']).zfill(12)
         print(anno_img_id)
-        f = open('/home/youngjin/datasets/labels/train2017/'+anno_img_id+'.txt','a')
+        f = open('/home/youngjin/datasets/coco/val/labels/'+anno_img_id+'.txt','a')
         f.write(str(anno_dict['category_id']))
         f.write(' ')
         f.write(str(anno_dict['bbox'][0]))
@@ -40,6 +40,6 @@ def coco_labels (anno_path) :
 
 if __name__ == "__main__" :
 
-    coco_labels = coco_labels('/home/youngjin/datasets/annotations/instances_train2017.json')
+    coco_labels = coco_labels('/home/youngjin/datasets/coco/annotations/instances_val2017.json')
 
     

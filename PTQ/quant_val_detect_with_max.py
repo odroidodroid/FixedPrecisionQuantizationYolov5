@@ -24,7 +24,6 @@ import os
 import sys
 from pathlib import Path
 from threading import Thread
-from hypothesis import target
 
 import numpy as np
 import torch
@@ -41,13 +40,14 @@ from utils.callbacks import Callbacks
 from utils.datasets import *
 from utils.general import (LOGGER, check_dataset, check_img_size, check_requirements, check_yaml,
                            coco80_to_coco91_class, colorstr, increment_path, non_max_suppression, print_args,
-                           scale_coords, xywh2xyxy, xyxy2xywh, xywh2xyxy_custom, xywh2xyxy_custom2,coco91_to_coco80_class)
+                           scale_coords, xywh2xyxy, xyxy2xywh, xywh2xyxy_custom,xywh2xyxy_custom2,coco91_to_coco80_class)
 from utils.metrics import ConfusionMatrix, ap_per_class, box_iou
 from utils.plots import output_to_target, plot_images, plot_val_study
 from utils.plots import *
 from utils.torch_utils import select_device, time_sync
-import cv2
-
+from utils.quant_utils.quant_module import *
+from utils.quant_utils.quant_utils import *
+from prepare_model import *
 
 def save_one_txt(predn, save_conf, shape, file):
     # Save one txt result
@@ -57,6 +57,7 @@ def save_one_txt(predn, save_conf, shape, file):
         line = (cls, *xywh, conf) if save_conf else (cls, *xywh)  # label format
         with open(file, 'a') as f:
             f.write(('%g ' * len(line)).rstrip() % line + '\n')
+
 
 
 def save_one_image(predn, names, save_conf, shape, file, img_id, im0) :
@@ -71,20 +72,6 @@ def save_one_image(predn, names, save_conf, shape, file, img_id, im0) :
     cv2.imwrite(file, im0)
 
 
-def save_targets(targets, names, save_conf, shape, file, img_id, im0) :
-
-    #im0 = cv2.imread('/home/youngjin/datasets/coco/val/images/' + img_id + '.jpg')
-    annotator = Annotator(im0, line_width=3, example=str(names))
-    targets = targets.view(-1,5)
-    for cls, *xyxy in targets.tolist() :
-        c = int(cls)
-        label = names[c]
-        annotator.box_label(xyxy, label, color=(c, True))
-    im0 = annotator.result()
-    cv2.imwrite(file, im0)
-
-
-
 def save_one_json(predn, jdict, path, class_map):
     # Save one JSON result {"image_id": 42, "category_id": 18, "bbox": [258.15, 41.29, 348.26, 243.78], "score": 0.236}
     image_id = int(path.stem) if path.stem.isnumeric() else path.stem
@@ -96,6 +83,15 @@ def save_one_json(predn, jdict, path, class_map):
             'category_id': class_map[int(p[5])],
             'bbox': [round(x, 3) for x in b],
             'score': round(p[4], 5)})
+    
+
+def update(model, dataset):
+    img = torch.load('PTQ_yolov5_distill_500.pth')[0]['img']
+
+    im0 = img[0].cuda()
+
+    _ = model(im0)
+
 
 
 def process_batch(detections, labels, iouv):
@@ -157,6 +153,9 @@ def run(
         plots=False,
         callbacks=Callbacks(),
         compute_loss=None,
+        bit_width=8,
+        mode='symmetric',
+        quantized_weight_save_path='',
 ):
     # Initialize/load model and set device
     training = model is not None
@@ -171,7 +170,6 @@ def run(
         save_dir = increment_path(Path(project) / name, exist_ok=exist_ok)  # increment run
         (save_dir / 'labels' if save_txt else save_dir).mkdir(parents=True, exist_ok=True)  # make dir
         (save_dir / 'images' if save_txt else save_dir).mkdir(parents=True, exist_ok=True)  # make dir
-        (save_dir / 'targets' if save_txt else save_dir).mkdir(parents=True, exist_ok=True)  # make dir
 
         # Load model
         model = DetectMultiBackend(weights, device=device, dnn=dnn, data=data, fp16=half)
@@ -181,7 +179,6 @@ def run(
         half = model.fp16  # FP16 supported on limited backends with CUDA
         gs = max(int(model.stride), 32)  # grid size (max stride)
 
-
         data_loader, dataset = create_dataloader_custom(image_path=source+'/images',
                                                         label_path=source+'/labels',
                                                         imgsz=imgsz,
@@ -190,16 +187,21 @@ def run(
                                                         workers=workers)
 
 
+        # Distill data
+        update(model, dataset)
+        #freeze_model(model)
+        print('model updated and froze')
 
-        # Load model
-
+        # Quantize model
+        model = prepare_model(model, bit_width, mode, quantized_weight_save_path)
+        print(model)
 
 
         if engine:
             batch_size = model.batch_size
         else:
             device = model.device
-            if not pt:
+            if not pt :
                 batch_size = 1  # export.py models default to batch-size 1
                 LOGGER.info(f'Forcing --batch-size 1 square inference (1,3,{imgsz},{imgsz}) for non-PyTorch models')
 
@@ -222,12 +224,13 @@ def run(
     loss = torch.zeros(3, device=device)
     jdict, stats, ap, ap_class = [], [], [], []
     callbacks.run('on_val_start')
+
     pbar = tqdm(dataset)
     eps = 1e-16
 
     for batch_i, (img, im0, targets, paths, shapes, img_id) in enumerate(pbar) :
-        callbacks.run('on_val_batch_start')
         t1 = time_sync()
+        callbacks.run('on_val_batch_start')
         img = torch.from_numpy(img).to(device)
         if not (targets is None) :
             targets = torch.from_numpy(targets).to(device)
@@ -252,8 +255,8 @@ def run(
         t3 = time_sync()
         out = non_max_suppression(out, conf_thres, iou_thres, classes, agnostic_nms, max_det)
         dt[2] += time_sync() - t3
-
         seen += 1
+
         if evaluate and not (targets is None): 
             for si, pred in enumerate(out):
                 pred = pred.view(-1, 6)
@@ -279,11 +282,6 @@ def run(
                         confusion_matrix.process_batch(predn, labelsn)
                 stats.append((correct, pred[:, 4], pred[:, 5], cat_ids[:, 0]))  # (correct, conf, pcls, tcls)
             
-            # Save targets
-            save_targets(labelsn, names, save_conf, shapes,
-            file=save_dir / 'targets' / (img_id + '.jpg'), img_id=img_id,
-            im0=copy(im0))
-
             # Save/log
             if save_txt:
                 save_one_txt(predn, save_conf, shapes, file=save_dir / 'labels' / (img_id + '.txt'))
@@ -296,8 +294,6 @@ def run(
                 pass
                 #save_one_json(predn, jdict, path, class_map)  # append to COCO-JSON dictionary
             callbacks.run('on_val_image_end', pred, predn, paths, names, img)
-
-
         # Plot images
         if plots and batch_i < 3:
             f = save_dir / f'val_batch{batch_i}_labels.jpg'  # labels
@@ -306,6 +302,8 @@ def run(
             Thread(target=plot_images, args=(im0, output_to_target(out), paths, f, names), daemon=True).start()
 
         callbacks.run('on_val_batch_end')
+
+
 
     # Compute metric
     stats = [torch.cat(x, 0).cpu().numpy() for x in zip(*stats)]  # to numpy
@@ -321,6 +319,7 @@ def run(
     precision = tpc / (tpc + fpc)
 
     print('cumsum recall : {}, precision : {}'.format(recall, precision))
+
 
 
     # # Compute metrics
@@ -370,8 +369,6 @@ def run(
     #         anno = COCO(anno_json)  # init annotations api
     #         pred = anno.loadRes(pred_json)  # init predictions api
     #         eval = COCOeval(anno, pred, 'bbox')
-    #         #if is_coco:
-    #         #    eval.params.imgIds = [int(Path(x).stem) for x in dataloader.dataset.im_files]  # image IDs to evaluate
     #         eval.evaluate()
     #         eval.accumulate()
     #         eval.summarize()
@@ -379,19 +376,21 @@ def run(
     #     except Exception as e:
     #         LOGGER.info(f'pycocotools unable to run: {e}')
 
+
+
 def parse_opt():
     parser = argparse.ArgumentParser()
     parser.add_argument('--data', type=str, default=ROOT / '../dataset/coco.yaml', help='dataset.yaml path')
     parser.add_argument('--weights', nargs='+', type=str, default=ROOT / 'yolov5l.pt', help='model.pt path(s)')
     parser.add_argument('--source', default='/home/youngjin/datasets/coco/val')
     parser.add_argument('--hyp', default='../dataset/hyps/hyp.scratch-low.yaml')
-    parser.add_argument('--batch-size', type=int, default=2, help='batch size')
     parser.add_argument('--evaluate', default=True)
+    parser.add_argument('--batch-size', type=int, default=2, help='batch size')
     parser.add_argument('--imgsz', '--img', '--img-size', nargs='+',type=int, default=[640], help='inference size (pixels)')
     parser.add_argument('--conf-thres', type=float, default=0.5, help='confidence threshold')
     parser.add_argument('--iou-thres', type=float, default=0.45, help='NMS IoU threshold')
     parser.add_argument('--task', default='val', help='train, val, test, speed or study')
-    parser.add_argument('--device', default='0,1', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
+    parser.add_argument('--device', default='0', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--workers', type=int, default=8, help='max dataloader workers (per RANK in DDP mode)')
     parser.add_argument('--single-cls', action='store_true', help='treat as single-class dataset')
     parser.add_argument('--augment', default=False, help='augmented inference')
@@ -404,11 +403,14 @@ def parse_opt():
     parser.add_argument('--save-hybrid', default=False, help='save label+prediction hybrid results to *.txt')
     parser.add_argument('--save-conf', action='store_true', help='save confidences in --save-txt labels')
     parser.add_argument('--save-json', default=False, help='save a COCO-JSON results file')
-    parser.add_argument('--project', default=ROOT / '../../runs/val_detect', help='save to project/name')
+    parser.add_argument('--project', default=ROOT / '../../runs/quant_val_detect', help='save to project/name')
     parser.add_argument('--name', default='exp', help='save to project/name')
     parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
     parser.add_argument('--half', default=False, help='use FP16 half-precision inference')
     parser.add_argument('--dnn', action='store_true', help='use OpenCV DNN for ONNX inference')
+    parser.add_argument('--bit_width',default=8)
+    parser.add_argument('--mode',default='symmetric')
+    parser.add_argument('--quantized_weight_save_path', default='')
     opt = parser.parse_args()
     opt.imgsz *= 2 if len(opt.imgsz) == 1 else 1  # expand
     opt.data = check_yaml(opt.data)  # check YAML
