@@ -45,9 +45,9 @@ from utils.metrics import ConfusionMatrix, ap_per_class, box_iou
 from utils.plots import output_to_target, plot_images, plot_val_study
 from utils.plots import *
 from utils.torch_utils import select_device, time_sync
-from utils.quant_utils.quant_module import *
-from utils.quant_utils.quant_utils import *
-from prepare_model import *
+from utils.quant_utils.new_quant_module import *
+from utils.quant_utils.new_quant_utils import *
+from new_prepare_model import *
 
 def save_one_txt(predn, save_conf, shape, file):
     # Save one txt result
@@ -86,11 +86,8 @@ def save_one_json(predn, jdict, path, class_map):
     
 
 def update(model, dataset):
-    img = torch.load('PTQ_yolov5_distill_500.pth')[0]['img']
-
-    im0 = img[0].cuda()
-
-    _ = model(im0)
+ 
+    _ = model()
 
 
 

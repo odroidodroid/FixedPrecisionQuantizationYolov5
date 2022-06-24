@@ -188,9 +188,9 @@ def run(
 
 
         # Distill data
-        update(model, dataset)
+        #update(model, dataset)
         #freeze_model(model)
-        print('model updated and froze')
+        #print('model updated and froze')
 
         # Quantize model
         model = prepare_model(model, bit_width, mode, quantized_weight_save_path)

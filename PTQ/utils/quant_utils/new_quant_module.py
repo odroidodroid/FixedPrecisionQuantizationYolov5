@@ -16,11 +16,13 @@ def gcd(inputA, inputB) :
 
 
 class QuantConcat(Module) :
-    def __init__() :
+    def __init__(self, dim=1) :
         super().__init__()
+        self.dim = dim
 
-    def forward(self, x) :
-        pass
+    def forward(self, x, y) :
+
+        return (torch.cat(x[0], y[0], dim=self.dim), gcd(x[1], y[1]))
 
 
 class QuantLinear(Module):
@@ -117,17 +119,11 @@ class QuantLinear(Module):
         # perform the quantization
         if not self.full_precision_flag:
             if self.quant_mode == 'symmetric':
-                # x_transform = x.data.view(self.in_channels, -1)
-                # x_min, x_max = x_transform.min(dim=1).values, x_transform.max(dim=1).values
-
-                # x_scale = symmetric_linear_quantization_params_act(self.activation_bit, x_min, x_max)
-                # x_int = symmetric_linear_quantize(x, x_scale)
 
                 x_int = torch.round((x[0]/x[1]) * self.x_scale)
 
                 weight_integer = self.weight_function(self.weight, self.weight_bit, self.weight_scale)
                 y = ste_round.apply(F.linear(x_int, self.weight_integer))
-                #y_fp = symmetric_linear_dequantize(y, x_scale, x_zeropoint)
                 return (y, self.weight_scale * self.x_scale)
 
             elif self.quant_mode == 'asymmetric':
@@ -202,9 +198,9 @@ class QuantBatchNorm2d(Module) :
             return x[0], x[1]
         else :
 
-            x[0] = self.bn(x[0])
+            y = self.bn(x[0])
 
-            return x
+            return (y, x[1])
 
 class QuantMaxPool2d(Module):
     """
@@ -236,8 +232,8 @@ class QuantMaxPool2d(Module):
         return s
 
     def forward(self, x):
-        x[0] = self.pool(x[0])
-        return x
+        y = self.pool(x[0])
+        return (y, x[1])
 
 
 class QuantDropout(Module):
@@ -260,9 +256,9 @@ class QuantDropout(Module):
         return s
 
     def forward(self, x):
-        x[0] = self.dropout(x[0])
+        y = self.dropout(x[0])
 
-        return x
+        return (y, x[1])
 
 
 class QuantUpsample(Module) :
@@ -277,8 +273,10 @@ class QuantUpsample(Module) :
         return s
     
     def forward(self, x) :
-        x[0] = self.upsample(x[0])
-        return x
+
+        y = self.upsample(x[0])
+        
+        return (y, x[1])
 
 class QuantAveragePool2d(Module):
     """
@@ -441,11 +439,6 @@ class QuantConv2d(Module):
         # quantize activation
 
         if self.quant_mode == "symmetric":
-            # x_transform = x.data.contiguous().view(self.in_channels, -1)
-            # x_min, x_max = x_transform.min(), x_transform.max()
-            
-            # x_scale = symmetric_linear_quantization_params_act(self.activation_bit, x_min, x_max)
-            # x_int = symmetric_linear_quantize(x, x_scale)
 
             x_int = torch.round((x[0]/x[1]) * self.x_scale)
 
@@ -455,7 +448,7 @@ class QuantConv2d(Module):
 
             y =  ste_round.apply(F.conv2d(x_int, weight_integer, bias_integer,
             self.stride, self.padding, self.dilation, self.groups)) ### ste_round ??????
-            #y_fp = symmetric_linear_dequantize_with_bias(y, x_scale, self.weight_scale, self.bias_scale, bias_integer)
+
             return (y, self.weight_scale * self.x_scale)
 
         elif self.quant_mode =='asymmetric':
