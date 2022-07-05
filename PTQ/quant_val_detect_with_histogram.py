@@ -153,6 +153,7 @@ def run(
         bit_width=8,
         mode='symmetric',
         quantized_weight_save_path='',
+        calibration_method='',
 ):
     # Initialize/load model and set device
     training = model is not None
@@ -408,6 +409,7 @@ def parse_opt():
     parser.add_argument('--bit_width',default=8)
     parser.add_argument('--mode',default='symmetric')
     parser.add_argument('--quantized_weight_save_path', default='')
+    parser.add_argument('--calibration_method', default='entropy')
     opt = parser.parse_args()
     opt.imgsz *= 2 if len(opt.imgsz) == 1 else 1  # expand
     opt.data = check_yaml(opt.data)  # check YAML
