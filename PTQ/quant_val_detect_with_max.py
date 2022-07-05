@@ -85,7 +85,7 @@ def save_one_json(predn, jdict, path, class_map):
             'score': round(p[4], 5)})
     
 
-def update(model, dataset):
+def calibrate_model(model, dataset):
 
     # load dataset
 
@@ -188,8 +188,8 @@ def run(
 
 
         # Update data
-        update(model, dataset)
-        #freeze_model(model)
+        calibrate_model(model, dataset)
+        freeze_model(model)
         print('model updated and froze')
 
         # Quantize model

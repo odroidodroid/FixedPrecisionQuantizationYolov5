@@ -10,6 +10,25 @@ from decimal import Decimal
 from torch.autograd import Function, Variable
 
 
+
+def reduce_axis_max(input, axis=None, keepdims=True) :
+    with torch.no_grad() :
+        output = input.abs()
+        if axis is None :
+            output = torch.max(output)
+        else :
+            if isinstance(axis, int) :
+                output, _ = torch.max(output, dim=axis, keepdim=keepdims)
+            else :
+                if isinstance(axis, tuple) and len(axis) > input.dim() :
+                    assert('cannot reduce more axis over tensor dim')
+                for i in axis :
+                    output, _ = torch.max(output, dim=i, keepdim=True)
+                if not keepdims or output.numel() == 1 :
+                    output.squeeze_() 
+        return output
+
+
 def clamp(input, min, max, inplace=False):
     """
     Clamp tensor input to (min, max).
