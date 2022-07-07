@@ -42,8 +42,7 @@ from copy import deepcopy
 #     return model
  
 
-
-def prepare_model (model=None, bit_width=None, mode=None, save_path=None) :
+def prepare_model (model=None, bit_width=None, mode=None, save_path=None, calibrator=None, axis=None, unsigned=None) :
 
     # define model parameter
     # prepare_model
@@ -57,46 +56,47 @@ def prepare_model (model=None, bit_width=None, mode=None, save_path=None) :
             for attr in dir(mod_outer) :
                 if attr == 'model' :
                     mod = getattr(mod_outer, attr)
-                    prepare_module(mod, attr_outer + '.' + attr, bit_width, mode, save_path)
+                    prepare_module(mod, attr_outer + '.' + attr, bit_width, mode, save_path, calibrator, axis, unsigned)
 
     return model
     
-def prepare_module(mod=None, attr=None, bit_width=None, mode=None, save_path=None) :
+def prepare_module(mod=None, attr=None, bit_width=None, mode=None, save_path=None, calibrator=None, axis=None, unsigned=None) :
 
     if isinstance(mod, nn.Sequential)  :
         for n, m in mod.named_children() :
-            prepare_module(m, attr + '.' + n, bit_width, mode, save_path)
+            prepare_module(m, attr + '.' + n, bit_width, mode, save_path, calibrator, axis, unsigned)
                
     elif isinstance(mod, Conv) :
         mod_copy = deepcopy(mod)
         for n, m in mod_copy.named_children() :
-            quant_mod = quantize_module(m, attr + '.' + n, bit_width, mode, save_path)
+            quant_mod = quantize_module(m, attr + '.' + n, bit_width, mode, save_path, calibrator, axis, unsigned)
             setattr(mod, n, quant_mod)
 
     elif isinstance(mod, Bottleneck) :
         for n, m in mod.named_children() :
-            prepare_module(m, attr + '.' + n, bit_width, mode, save_path)
+            prepare_module(m, attr + '.' + n, bit_width, mode, save_path, calibrator, axis, unsigned)
 
     elif isinstance(mod, C3) :
         for n, m in mod.named_children() :
-            prepare_module(m, attr + '.' + n, bit_width, mode, save_path)
+            prepare_module(m, attr + '.' + n, bit_width, mode, save_path, calibrator, axis, unsigned)
             
     elif isinstance(mod, SPPF) :
         for n, m in mod.named_children() :
-            prepare_module(m, attr + '.' + n, bit_width, mode, save_path)
+            prepare_module(m, attr + '.' + n, bit_width, mode, save_path, calibrator, axis, unsigned)
     
     elif isinstance(mod,Detect) :
         for n, m in mod.named_children() :
-            prepare_module(m, attr + '.' + n, bit_width, mode, save_path)
+            prepare_module(m, attr + '.' + n, bit_width, mode, save_path, calibrator, axis, unsigned)
     
     elif isinstance(mod, nn.ModuleList) :
         for n, m in mod.named_children() :
-            prepare_module(m, attr + '.' + n, bit_width, mode, save_path)
+            prepare_module(m, attr + '.' + n, bit_width, mode, save_path, calibrator, axis, unsigned)
 
-def quantize_module(mod=None, attr=None, bit_width=None, mode=None, save_path=None) :
+def quantize_module(mod=None, attr=None, bit_width=None, mode=None, save_path=None, calibrator=None, axis=None, unsigned=None) :
 
     if isinstance(mod, nn.Conv2d) :
-        quant_mod = QuantConv2d(weight_bit=bit_width, activation_bit=bit_width, quant_mode=mode)
+        quant_mod = QuantConv2d(weight_bit=bit_width, activation_bit=bit_width, quant_mode=mode,
+        calibrator=calibrator, axis=axis, unsigned=unsigned)
         quant_mod.set_param(mod)
         quant_mod.set_quant_param(save_path=save_path)
         return quant_mod
@@ -106,19 +106,6 @@ def quantize_module(mod=None, attr=None, bit_width=None, mode=None, save_path=No
         quant_mod.set_param(mod)
         quant_mod.set_quant_param(save_path=save_path)
         return quant_mod
-
-    elif isinstance(mod, Concat) :
-        quant_mod = QuantConcat()
-        return quant_mod
-
-    elif isinstance(mod, nn.MaxPool2d) :
-        quant_mod = QuantMaxPool2d()
-        return quant_mod
-
-    elif isinstance(mod, nn.Upsample) :
-        quant_mod = QuantUpsample()
-        return quant_mod
-
 
     else :
         return mod
@@ -137,11 +124,11 @@ def freeze_model(model):
     elif type(model) == nn.Sequential:
         for n, m in model.named_children():
             freeze_model(m)
-    else:
-        for attr in dir(model):
-            mod = getattr(model, attr)
-            if isinstance(mod, nn.Module) and 'norm' not in attr:
-                freeze_model(mod)
+    # else:
+    #     for attr in dir(model):
+    #         mod = getattr(model, attr)
+    #         if isinstance(mod, nn.Module) and 'norm' not in attr:
+    #             freeze_model(mod)
 
 
 def unfreeze_model(model):

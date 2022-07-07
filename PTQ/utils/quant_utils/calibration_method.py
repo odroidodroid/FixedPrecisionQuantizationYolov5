@@ -2,7 +2,7 @@
 from numpy import unsignedinteger
 import torch
 import copy
-from new_quant_utils import reduce_axis_max
+from utils.quant_utils.new_quant_utils import reduce_axis_max
 import numpy as np
 from scipy.stats import entropy
 from collections import Counter

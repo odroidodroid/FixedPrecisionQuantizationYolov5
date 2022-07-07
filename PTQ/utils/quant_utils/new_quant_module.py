@@ -7,7 +7,9 @@ import torch.nn.functional as F
 import torch.multiprocessing as mp
 from torch.nn import Module, Parameter
 
-from .quant_utils import *
+#from .quant_utils import *
+from utils.quant_utils.new_quant_utils import *
+from utils.quant_utils.calibration_method import *
 
 def gcd(inputA, inputB) :
     while inputB:
@@ -369,7 +371,10 @@ class QuantConv2d(Module):
                 full_precision_flag=False,
                 quant_mode="symmetric",
                 per_channel=True,
-                fix_flag=False):
+                fix_flag=False, 
+                calibrator='entropy',
+                axis=0,
+                unsigned=False):
         super().__init__()
 
         self.full_precision_flag = full_precision_flag
@@ -379,7 +384,68 @@ class QuantConv2d(Module):
         self.per_channel = per_channel
         self.fix_flag = fix_flag
         self.bias_bit = bias_bit
+        self.axis = axis
+        self.unsigned = unsigned
+
+        self._if_clip = False
+        self._if_calib = False
+        self._if_quant = True
+
         self.quantize_bias = (False if bias_bit is None else True)
+        self.calibrator = HistogramCalibrator(
+            self.weight_bit, axis=self.axis, unsigned=self.unsigned) if not calibrator == 'max' else MaxCalibrator(
+                self.weight_bit, axis=self.axis, unsigned=self.unsigned)
+        
+    def disable_quant(self) :
+        self._if_quant = False
+
+    def enable_quant(self) :
+        self._if_quant  = True
+
+    def disable_calib(self) :
+        self._if_calib = False
+
+    def enable_calib(self) :
+        self._if_calib = True
+    
+    def enable_clip(self) :
+        if not self._learn_amax:
+            raise ValueError("learn_amax is False. Cannot enable clip.")
+        self.clip.clip_value_min.required_grad = True
+        self.clip.clip_value_max.required_grad = True
+        self._if_clip = True
+
+    def disable_clip(self) :
+        self._if_clip = False
+        self.clip.clip_value_min.required_grad = False
+        self.clip.clip_value_max.required_grad = False
+
+    # @property
+    # def axis(self):
+    #     return self._axis
+
+    # @property
+    # def unsigned(self):
+    #     return self._unsigned
+
+    # @property
+    # def scale(self):
+    #     if self._scale is None:
+    #         pass
+    #     return self._scale
+
+    # @property
+    # def amax(self):
+    #     if not hasattr(self, "_amax"):
+    #         return None
+    #     return self._amax
+
+    # @property
+    # def step_size(self):
+    #     if not hasattr(self, "_amax"):
+    #         return None
+    #     return self._amax / (2.0**(self._num_bits - 1 + int(self._unsigned)) - 1.0)
+
 
 
     def __repr__(self):
@@ -434,41 +500,55 @@ class QuantConv2d(Module):
     def unfix(self):
         self.fix_flag = False
 
+
     def forward(self, x):
 
-        # quantize activation
 
-        if self.quant_mode == "symmetric":
+        if self._if_calib : 
+            if self.calibrator is None :
+                raise RuntimeError('calibrator was not created')
+            self.calibrator.collect(x)
 
-            x_int = torch.round((x[0]/x[1]) * self.x_scale)
 
-            self.weight_function = SymmetricQuantFunction.apply
-            weight_integer = self.weight_function(self.weight, self.weight_bit, self.weight_scale)
-            bias_integer = self.weight_function(self.bias, self.weight_bit, self.bias_scale)
+        if self._if_clip :
 
-            y =  ste_round.apply(F.conv2d(x_int, weight_integer, bias_integer,
-            self.stride, self.padding, self.dilation, self.groups)) ### ste_round ??????
+            pass
 
-            return (y, self.weight_scale * self.x_scale)
+        if self._if_quant : 
 
-        elif self.quant_mode =='asymmetric':
-            x_transform = x.data.contiguous().view(self.in_channels, -1)
-            x_min, x_max = x_transform.min(), x_transform.max()
-            
-            x_scale, x_zeropoint = asymmetric_linear_quantization_params(self.activation_bit, x_min, x_max)
-            x_int = asymmetric_linear_quantize(x, x_scale, x_zeropoint)
+            # quantize activation
 
-            self.weight_function = AsymmetricQuantFunction.apply
-            weight_integer = self.weight_function(self.weight, self.weight_bit, self.weight_scale, self.weight_zeropoint)
-            bias_integer = self.weight_function(self.bias, self.bias_bit, self.bias_scale, self.bias_zeropoint)
-            
-            y =  ste_round.apply(F.conv2d(x_int, weight_integer, bias_integer, 
-            self.stride, self.padding, self.dilation, self.groups))
-            y_fp = asymmetric_linear_dequantize_with_bias(y, bias_integer, x_scale, self.weight_scale, self.bias_scale)
-            return y_fp
+            if self.quant_mode == "symmetric":
 
-        else:
-            raise ValueError("unknown quant mode: {}".format(self.quant_mode))
+                x_int = torch.round((x[0]/x[1]) * self.x_scale)
+
+                self.weight_function = SymmetricQuantFunction.apply
+                weight_integer = self.weight_function(self.weight, self.weight_bit, self.weight_scale)
+                bias_integer = self.weight_function(self.bias, self.weight_bit, self.bias_scale)
+
+                y =  ste_round.apply(F.conv2d(x_int, weight_integer, bias_integer,
+                self.stride, self.padding, self.dilation, self.groups)) ### ste_round ??????
+
+                return (y, self.weight_scale * self.x_scale)
+
+            elif self.quant_mode =='asymmetric':
+                x_transform = x.data.contiguous().view(self.in_channels, -1)
+                x_min, x_max = x_transform.min(), x_transform.max()
+                
+                x_scale, x_zeropoint = asymmetric_linear_quantization_params(self.activation_bit, x_min, x_max)
+                x_int = asymmetric_linear_quantize(x, x_scale, x_zeropoint)
+
+                self.weight_function = AsymmetricQuantFunction.apply
+                weight_integer = self.weight_function(self.weight, self.weight_bit, self.weight_scale, self.weight_zeropoint)
+                bias_integer = self.weight_function(self.bias, self.bias_bit, self.bias_scale, self.bias_zeropoint)
+                
+                y =  ste_round.apply(F.conv2d(x_int, weight_integer, bias_integer, 
+                self.stride, self.padding, self.dilation, self.groups))
+                y_fp = asymmetric_linear_dequantize_with_bias(y, bias_integer, x_scale, self.weight_scale, self.bias_scale)
+                return y_fp
+
+            else:
+                raise ValueError("unknown quant mode: {}".format(self.quant_mode))
 
 
 def freeze_model(model):

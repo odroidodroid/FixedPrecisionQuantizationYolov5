@@ -48,6 +48,7 @@ from utils.torch_utils import select_device, time_sync
 from utils.quant_utils.new_quant_module import *
 from utils.quant_utils.new_quant_utils import *
 from new_prepare_model import *
+from utils.quant_utils.calibration_method import *
 
 def save_one_txt(predn, save_conf, shape, file):
     # Save one txt result
@@ -85,9 +86,50 @@ def save_one_json(predn, jdict, path, class_map):
             'score': round(p[4], 5)})
     
 
-def calibrate_model(model, dataset):
- 
-    _ = model()
+# def compute_axis_max(model, **kwargs):
+#     # Load calib result
+#     for name, module in model.named_modules():
+#         if isinstance(module, QuantConv2d):
+#             if module.calibrator is not None:
+#                 if isinstance(module._calibrator, MaxCalibrator):
+#                     module.load_calib_axis_max()
+#                 else:
+#                     module.load_calib_axis_max(**kwargs)
+#             print(F"{name:40}: {module}")
+#     model.cuda()
+
+
+
+# def calibrate_model(model, dataset, num_calib_batch, calibrator, hist_percentile, out_dir):
+
+#     model_name = 'yolov5'
+#     print("Calibrating model...\n") 
+
+#     with torch.no_grad() :
+#         collect_stats(model, dataset, num_calib_batch)
+
+#     if not calibrator == 'histogram' :
+#         print("max calibration")
+#         compute_axis_max(model, method='max')
+#         calib_output = os.path.join(out_dir,
+#         F"{model_name}-max-{percentile}-{num_calib_batch*dataset.batch_size}.pth")
+#         torch.save(model.state_dict(), calib_output)
+#     else :
+#         for percentile in hist_percentile : 
+#             print("percentile calibration")
+#             compute_axis_max(model, method="percentile")
+#             calib_output = os.path.join(out_dir,
+#             F"{model_name}-percentile-{percentile}-{num_calib_batch*dataset.batch_size}.pth")
+#             torch.save(model.state_dict(), calib_output)
+
+#         for method in ["mse", "entropy"] :
+#             print(F"{method} calibration")
+#             compute_axis_max(model, method=method)
+#             calib_output = os.path.join(out_dir, 
+#             F"{model_name}-{method}-{percentile}-{num_calib_batch*dataset.batch_size}.pth")
+#             torch.save(model.state_dict(), calib_output)
+
+# #    _ = model()
 
 
 
@@ -154,6 +196,10 @@ def run(
         mode='symmetric',
         quantized_weight_save_path='',
         calibration_method='',
+        num_calib_batch=0,
+        hist_percentile=0.0,
+        out_dir='',
+
 ):
     # Initialize/load model and set device
     training = model is not None
@@ -186,8 +232,8 @@ def run(
 
 
         # calibrate model
-        calibrate_model(model, dataset)
-        freeze_model(model)
+        #calibrate_model(model, dataset, num_calib_batch, calibration_method, hist_percentile, out_dir)
+        #freeze_model(model)
         print('model updated and froze')
 
         # Quantize model
@@ -340,10 +386,10 @@ def run(
     #         LOGGER.info(pf % (names[c], seen, nt[c], p[i], r[i], ap50[i], ap[i]))
 
     # # Print speeds
-    # t = tuple(x / seen * 1E3 for x in dt)  # speeds per image
-    # if not training:
-    #     shape = (batch_size, 3, imgsz, imgsz)
-    #     LOGGER.info(f'Speed: %.1fms pre-process, %.1fms inference, %.1fms NMS per image at shape {shape}' % t)
+    t = tuple(x / seen * 1E3 for x in dt)  # speeds per image
+    if not training:
+        shape = (batch_size, 3, imgsz, imgsz)
+        LOGGER.info(f'Speed: %.1fms pre-process, %.1fms inference, %.1fms NMS per image at shape {shape}' % t)
 
     # # Plots
     # if plots:
@@ -410,6 +456,10 @@ def parse_opt():
     parser.add_argument('--mode',default='symmetric')
     parser.add_argument('--quantized_weight_save_path', default='')
     parser.add_argument('--calibration_method', default='entropy')
+    parser.add_argument('--num_calib_batch', default=500)
+    parser.add_argument('--hist_percentile', default=[99.9, 99.99, 99.999, 99.9999])
+    parser.add_argument('--out_dir', default=ROOT/'../../stats')
+
     opt = parser.parse_args()
     opt.imgsz *= 2 if len(opt.imgsz) == 1 else 1  # expand
     opt.data = check_yaml(opt.data)  # check YAML

@@ -42,8 +42,6 @@ from copy import deepcopy
 
 #     return model
  
-
-
 def prepare_model (model=None, bit_width=None, mode=None, save_path=None) :
 
     # define model parameter
@@ -107,6 +105,19 @@ def quantize_module(mod=None, attr=None, bit_width=None, mode=None, save_path=No
         quant_mod.set_param(mod)
         quant_mod.set_quant_param(save_path=save_path)
         return quant_mod
+
+    elif isinstance(mod, Concat) :
+        quant_mod = QuantConcat()
+        return quant_mod
+
+    elif isinstance(mod, nn.MaxPool2d) :
+        quant_mod = QuantMaxPool2d()
+        return quant_mod
+
+    elif isinstance(mod, nn.Upsample) :
+        quant_mod = QuantUpsample()
+        return quant_mod
+
 
     else :
         return mod

@@ -19,6 +19,7 @@ Usage - formats:
 """
 
 import argparse
+from gc import collect
 import json
 import os
 import sys
@@ -48,6 +49,7 @@ from utils.torch_utils import select_device, time_sync
 from utils.quant_utils.new_quant_module import *
 from utils.quant_utils.new_quant_utils import *
 from new_prepare_model import *
+from utils.quant_utils.calibration_method import *
 
 def save_one_txt(predn, save_conf, shape, file):
     # Save one txt result
@@ -85,12 +87,75 @@ def save_one_json(predn, jdict, path, class_map):
             'score': round(p[4], 5)})
     
 
-def calibrate_model(model, dataset):
+# def compute_axis_max(model, **kwargs):
+#     # Load calib result
+#     for name, module in model.named_modules():
+#         if isinstance(module, QuantConv2d):
+#             if module.calibrator is not None:
+#                 if isinstance(module.calibrator, MaxCalibrator):
+#                     module.load_calib_axis_max()
+#                 else:
+#                     module.load_calib_axis_max(**kwargs)
+#             print(F"{name:40}: {module}")
+#     model.cuda()
 
-    # load dataset
+
+# def collect_model_stats(model, data_loader, num_batches):
+#     """Feed data to the network and collect statistics"""
+#     # Enable calibrators
+#     for name, module in model.named_modules():
+#         if isinstance(module, QuantConv2d):
+#             if module.calibrator is not None:
+#                 module.disable_quant()
+#                 module.enable_calib()
+#     # Feed data to the network for collecting stats
+#     for i, (image, _, _, _, _, _) in tqdm(enumerate(data_loader), total=num_batches):
+#         image = torch.from_numpy(image).cuda()
+#         image = image.float()
+#         image = image.view(1, image.shape[0], image.shape[1], image.shape[2])
+#         model(image)
+#         if i >= num_batches:
+#             break
+
+#     # Disable calibrators
+#     for name, module in model.named_modules():
+#         if isinstance(module, QuantConv2d):
+#             if module.calibrator is not None:
+#                 module.enable_quant()
+#                 module.disable_calib()
+
+# def calibrate_model(model, dataset, num_calib_batch, calibrator, hist_percentile, out_dir):
+
+#     model_name = 'yolov5'
+#     print("Calibrating model...\n") 
+
+#     with torch.no_grad() :
+#         collect_model_stats(model, dataset, num_calib_batch)
+
+#     if not calibrator == 'histogram' :
+#         print("max calibration")
+#         compute_axis_max(model, method='max')
+#         calib_output = os.path.join(out_dir,
+#         F"{model_name}-max-{num_calib_batch}.pth")
+#         torch.save(model.state_dict(), calib_output)
+#     else :
+#         for percentile in hist_percentile : 
+#             print("percentile calibration")
+#             compute_axis_max(model, method="percentile")
+#             calib_output = os.path.join(out_dir,
+#             F"{model_name}-percentile-{percentile}-{num_calib_batch}.pth")
+#             torch.save(model.state_dict(), calib_output)
+
+#         for method in ["mse", "entropy"] :
+#             print(F"{method} calibration")
+#             compute_axis_max(model, method=method)
+#             calib_output = os.path.join(out_dir, 
+#             F"{model_name}-{method}-{percentile}-{num_calib_batch}.pth")
+#             torch.save(model.state_dict(), calib_output)
+
+# #    _ = model()
 
 
-    _ = model()
 
 
 
@@ -156,6 +221,10 @@ def run(
         bit_width=8,
         mode='symmetric',
         quantized_weight_save_path='',
+        calibration_method='',
+        num_calib_batch=0,
+        hist_percentile=0.0,
+        out_dir='',
 ):
     # Initialize/load model and set device
     training = model is not None
@@ -188,12 +257,11 @@ def run(
 
 
         # Update data
-        calibrate_model(model, dataset)
-        freeze_model(model)
-        print('model updated and froze')
+        #calibrate_model(model, dataset, num_calib_batch, calibration_method, hist_percentile, out_dir)
+        #freeze_model(model)
 
         # Quantize model
-        model = prepare_model(model, bit_width, mode, quantized_weight_save_path)
+        model = prepare_model(model, bit_width, mode, quantized_weight_save_path, calibration_method, axis=0, unsigned=False)
         print(model)
 
 
@@ -236,7 +304,7 @@ def run(
             targets = torch.from_numpy(targets).to(device)
         paths = source + '/images/' + img_id + '.jpg'
         img = img.view(1, img.shape[0], img.shape[1],img.shape[2])
-            #targets = torch.from_numpy(targets).to(device)
+        #targets = torch.from_numpy(targets).to(device)
         img = img.half() if half else img.float()  # uint8 to fp16/32
         img /= 255  # 0 - 255 to 0.0 - 1.0
         nb, _, height, width = img.shape  # batch size, channels, height, width
@@ -342,10 +410,10 @@ def run(
     #         LOGGER.info(pf % (names[c], seen, nt[c], p[i], r[i], ap50[i], ap[i]))
 
     # # Print speeds
-    # t = tuple(x / seen * 1E3 for x in dt)  # speeds per image
-    # if not training:
-    #     shape = (batch_size, 3, imgsz, imgsz)
-    #     LOGGER.info(f'Speed: %.1fms pre-process, %.1fms inference, %.1fms NMS per image at shape {shape}' % t)
+    t = tuple(x / seen * 1E3 for x in dt)  # speeds per image
+    if not training:
+        shape = (batch_size, 3, imgsz, imgsz)
+        LOGGER.info(f'Speed: %.1fms pre-process, %.1fms inference, %.1fms NMS per image at shape {shape}' % t)
 
     # # Plots
     # if plots:
@@ -411,6 +479,10 @@ def parse_opt():
     parser.add_argument('--bit_width',default=8)
     parser.add_argument('--mode',default='symmetric')
     parser.add_argument('--quantized_weight_save_path', default='')
+    parser.add_argument('--calibration_method', default='max')
+    parser.add_argument('--num_calib_batch', default=500)
+    parser.add_argument('--hist_percentile', default=[99.9, 99.99, 99.999, 99.9999])
+    parser.add_argument('--out_dir', default=ROOT/'../../stats')
     opt = parser.parse_args()
     opt.imgsz *= 2 if len(opt.imgsz) == 1 else 1  # expand
     opt.data = check_yaml(opt.data)  # check YAML

@@ -48,6 +48,7 @@ from utils.torch_utils import select_device, time_sync
 from utils.quant_utils.quant_module import *
 from utils.quant_utils.quant_utils import *
 from prepare_model import *
+from utils.quant_utils.calibration_method import *
 
 def save_one_txt(predn, save_conf, shape, file):
     # Save one txt result
