@@ -437,8 +437,8 @@ class QuantConv2d(Module):
             weight_integer = self.weight_function(self.weight, self.weight_bit, self.weight_scale)
             bias_integer = self.weight_function(self.bias, self.weight_bit, self.bias_scale)
 
-            y =  ste_round.apply(F.conv2d(x_int, weight_integer, bias_integer,
-            self.stride, self.padding, self.dilation, self.groups)) ### ste_round ??????
+            y =  F.conv2d(x_int, weight_integer, bias_integer,
+            self.stride, self.padding, self.dilation, self.groups) ### ste_round ??????
             y_fp = symmetric_linear_dequantize_with_bias(y, x_scale, self.weight_scale, self.bias_scale, bias_integer)
             return y_fp
 
