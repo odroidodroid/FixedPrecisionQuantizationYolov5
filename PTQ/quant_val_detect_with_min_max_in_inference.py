@@ -385,7 +385,7 @@ def parse_opt():
     parser.add_argument('--weights', nargs='+', type=str, default=ROOT / 'yolov5l.pt', help='model.pt path(s)')
     parser.add_argument('--source', default='/home/youngjin/datasets/coco/val')
     parser.add_argument('--hyp', default='../dataset/hyps/hyp.scratch-low.yaml')
-    parser.add_argument('--evaluate', default=True)
+    parser.add_argument('--evaluate', default=False)
     parser.add_argument('--batch-size', type=int, default=2, help='batch size')
     parser.add_argument('--imgsz', '--img', '--img-size', nargs='+',type=int, default=[640], help='inference size (pixels)')
     parser.add_argument('--conf-thres', type=float, default=0.5, help='confidence threshold')
