@@ -280,9 +280,9 @@ def run(
                 stats.append((correct, pred[:, 4], pred[:, 5], cat_ids[:, 0]))  # (correct, conf, pcls, tcls)
             
             # Save targets
-            save_targets(labelsn, names, save_conf, shapes,
-            file=save_dir / 'targets' / (img_id + '.jpg'), img_id=img_id,
-            im0=copy(im0))
+            #save_targets(labelsn, names, save_conf, shapes,
+            #file=save_dir / 'targets' / (img_id + '.jpg'), img_id=img_id,
+            #im0=copy(im0))
 
             # Save/log
             if save_txt:
