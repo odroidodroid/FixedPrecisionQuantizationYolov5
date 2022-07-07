@@ -139,15 +139,15 @@ def run(
         single_cls=False,  # treat as single-class dataset
         augment=False,  # augmented inference
         verbose=False,  # verbose output
-        save_txt=True,  # save results to *.txt
-        save_img=True,
+        save_txt=False,  # save results to *.txt
+        save_img=False,
         save_hybrid=False,  # save label+prediction hybrid results to *.txt
         save_conf=False,  # save confidences in --save-txt labels
         save_json=True,  # save a COCO-JSON results file
         project=ROOT / '../../runs/quant_val_detect',  # save to project/name
         name='exp',  # save to project/name
         exist_ok=False,  # existing project/name ok, do not increment
-        half=False,  # use FP16 half-precision inference
+        half=True,  # use FP16 half-precision inference
         dnn=False,  # use OpenCV DNN for ONNX inference
         model=None,
         save_dir=Path(''),
@@ -385,7 +385,7 @@ def parse_opt():
     parser.add_argument('--weights', nargs='+', type=str, default=ROOT / 'yolov5l.pt', help='model.pt path(s)')
     parser.add_argument('--source', default='/home/youngjin/datasets/coco/val')
     parser.add_argument('--hyp', default='../dataset/hyps/hyp.scratch-low.yaml')
-    parser.add_argument('--evaluate', default=False)
+    parser.add_argument('--evaluate', default=True)
     parser.add_argument('--batch-size', type=int, default=2, help='batch size')
     parser.add_argument('--imgsz', '--img', '--img-size', nargs='+',type=int, default=[640], help='inference size (pixels)')
     parser.add_argument('--conf-thres', type=float, default=0.5, help='confidence threshold')
