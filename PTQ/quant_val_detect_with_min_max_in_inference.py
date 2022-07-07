@@ -294,7 +294,7 @@ def run(
             if save_json:
                 pass
                 #save_one_json(predn, jdict, path, class_map)  # append to COCO-JSON dictionary
-            callbacks.run('on_val_image_end', pred, predn, paths, names, img)
+            #callbacks.run('on_val_image_end', pred, predn, paths, names, img)
         # Plot images
         if plots and batch_i < 3:
             f = save_dir / f'val_batch{batch_i}_labels.jpg'  # labels
