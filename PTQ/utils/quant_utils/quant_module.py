@@ -5,7 +5,7 @@ import numpy as np
 import torch.nn as nn
 import torch.multiprocessing as mp
 from torch.nn import Module, Parameter
-import torch.nn.quantized.functional as F
+import torch.nn.functional as F
 
 from .quant_utils import *
 
@@ -431,26 +431,16 @@ class QuantConv2d(Module):
             x_min, x_max = x_transform.min(), x_transform.max()
             
             x_scale = symmetric_linear_quantization_params_act(self.activation_bit, x_min, x_max)
-            #x_int = symmetric_linear_quantize(x, x_scale)
+            x_int = symmetric_linear_quantize(x, x_scale)
 
-            x_int = torch.quantize_per_tensor(x, scale=x_scale, zero_point=0, dtype=torch.quint8).to('cuda')
-
-
-            #self.weight_function = SymmetricQuantFunction.apply
-            #weight_integer = self.weight_function(self.weight, self.weight_bit, self.weight_scale)
-            #bias_integer = self.weight_function(self.bias, self.weight_bit, self.bias_scale)
-
-            weight_integer = torch.quantize_per_channel(self.weight, self.weight_scale, 
-            torch.zeros(size=self.weight.shape).to('cuda'), 
-            4, torch.quint8).to('cuda')
-            bias_integer = torch.quantize_per_channel(self.bias, self.bias_scale, 
-            torch.zeros(size=self.bias.shape).to('cuda').view(1, self.bias.shape[0], self.bias.shape[1], self.bias.shape[2]), 
-            4, torch.quint8).to('cuda')
+            self.weight_function = SymmetricQuantFunction.apply
+            weight_integer = self.weight_function(self.weight, self.weight_bit, self.weight_scale)
+            bias_integer = self.weight_function(self.bias, self.weight_bit, self.bias_scale)
 
             y =  F.conv2d(x_int, weight_integer, bias_integer,
             self.stride, self.padding, self.dilation, self.groups, scale=self.weight_scale, zero_point=0) ### ste_round ??????
-            #y_fp = symmetric_linear_dequantize_with_bias(y, x_scale, self.weight_scale, self.bias_scale, bias_integer)
-            return y
+            y_fp = symmetric_linear_dequantize_with_bias(y, x_scale, self.weight_scale, self.bias_scale, bias_integer)
+            return y_fp
 
         elif self.quant_mode =='asymmetric':
             x_transform = x.data.contiguous().view(self.in_channels, -1)
